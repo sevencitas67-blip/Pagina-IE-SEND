@@ -307,18 +307,15 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot,
    Todo el portal vive en un solo documento compartido: portal/db
    ===================================================================== */
 
-/* ⬇️⬇️⬇️  PEGA AQUÍ TU CONFIGURACIÓN DE FIREBASE  ⬇️⬇️⬇️
-   La copias tal cual desde la consola de Firebase.
-   Reemplaza este bloque completo, desde la llave { hasta la llave }.   */
+/* Configuración de Firebase · proyecto ie-send */
 const firebaseConfig = {
-  apiKey: "PEGA-AQUI",
-  authDomain: "PEGA-AQUI",
-  projectId: "PEGA-AQUI",
-  storageBucket: "PEGA-AQUI",
-  messagingSenderId: "PEGA-AQUI",
-  appId: "PEGA-AQUI"
+  apiKey: "AIzaSyB3iwsrQj2GCi1QlAPRdfYo6hW5-Tgdm_s",
+  authDomain: "ie-send.firebaseapp.com",
+  projectId: "ie-send",
+  storageBucket: "ie-send.firebasestorage.app",
+  messagingSenderId: "68179987058",
+  appId: "1:68179987058:web:0afc98e4322684b4b4d0eb"
 };
-/* ⬆️⬆️⬆️  FIN DE LA CONFIGURACIÓN  ⬆️⬆️⬆️ */
 
 const nube = getFirestore(initializeApp(firebaseConfig));
 const DOC_PORTAL = doc(nube, 'portal', 'db');
@@ -650,10 +647,12 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
    ARRANQUE
    ===================================================================== */
 (async function boot(){
-  DB = await storeGet();
+  // Si Firestore no responde en 10 segundos, seguimos igual en vez de quedarnos cargando
+  const conLimite = p => Promise.race([p, new Promise(r => setTimeout(()=>r(null), 10000))]);
+  DB = await conLimite(storeGet());
   if(!DB || !DB.users || !DB.users.length || !DB.marks){
     DB = await seedDB();
-    await save();
+    conLimite(save());
   }
   DB.terms = DB.terms || TERMS.slice();
   DB.subjects = DB.subjects && DB.subjects.length ? DB.subjects : SUBJECTS.slice();
