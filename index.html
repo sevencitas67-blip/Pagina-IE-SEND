@@ -298,7 +298,8 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot }
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot,
+         collection, addDoc, query, orderBy, where, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* =====================================================================
@@ -310,17 +311,18 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot }
    La copias tal cual desde la consola de Firebase.
    Reemplaza este bloque completo, desde la llave { hasta la llave }.   */
 const firebaseConfig = {
-  apiKey: "AIzaSyB3iwsrQj2GCi1QlAPRdfYo6hW5-Tgdm_s",
-  authDomain: "ie-send.firebaseapp.com",
-  projectId: "ie-send",
-  storageBucket: "ie-send.firebasestorage.app",
-  messagingSenderId: "68179987058",
-  appId: "1:68179987058:web:0afc98e4322684b4b4d0eb"
+  apiKey: "PEGA-AQUI",
+  authDomain: "PEGA-AQUI",
+  projectId: "PEGA-AQUI",
+  storageBucket: "PEGA-AQUI",
+  messagingSenderId: "PEGA-AQUI",
+  appId: "PEGA-AQUI"
 };
 /* ⬆️⬆️⬆️  FIN DE LA CONFIGURACIÓN  ⬆️⬆️⬆️ */
 
 const nube = getFirestore(initializeApp(firebaseConfig));
 const DOC_PORTAL = doc(nube, 'portal', 'db');
+const COL_MSG = collection(nube, 'mensajes');   // los mensajes van aparte: son pequeños y rápidos
 let storageOk = true;
 
 async function storeGet(){
@@ -335,7 +337,9 @@ async function storeGet(){
 }
 async function storeSet(data){
   try{
-    await setDoc(DOC_PORTAL, { json: JSON.stringify(data) });
+    // Los mensajes no viajan en este bloque; tienen su propia colección
+    const { messages, ...resto } = data;
+    await setDoc(DOC_PORTAL, { json: JSON.stringify(resto) });
     storageOk = true;
   }catch(e){
     storageOk = false;
@@ -343,22 +347,41 @@ async function storeSet(data){
   }
 }
 async function storeClear(){
-  try{ await deleteDoc(DOC_PORTAL); }catch(e){ console.error(e); }
+  try{
+    await deleteDoc(DOC_PORTAL);
+    const viejos = await getDocs(COL_MSG);
+    await Promise.all(viejos.docs.map(d => deleteDoc(d.ref)));
+  }catch(e){ console.error(e); }
+}
+async function borrarMensajesDe(userId){
+  try{
+    const [a, b] = await Promise.all([
+      getDocs(query(COL_MSG, where('from','==',userId))),
+      getDocs(query(COL_MSG, where('to','==',userId)))
+    ]);
+    await Promise.all([...a.docs, ...b.docs].map(d => deleteDoc(d.ref)));
+  }catch(e){ console.error(e); }
 }
 
-/* Escucha permanente: cuando otro dispositivo guarda algo, llega aquí solo.
-   Sirve sobre todo para el chat en vivo. */
+/* Escucha del portal (notas, reportes, usuarios) */
 function escucharCambios(){
   onSnapshot(DOC_PORTAL, snap => {
     if(!snap.exists()) return;
     if(snap.metadata.hasPendingWrites) return;   // es mi propio cambio, ya lo dibujé
-    try{
-      DB = JSON.parse(snap.data().json);
-    }catch(e){ return; }
-    if(!currentUser) return;
-    // Si estoy en el chat, repinto la conversación sin borrar lo que estoy escribiendo
-    if(activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
+    let remoto;
+    try{ remoto = JSON.parse(snap.data().json); }catch(e){ return; }
+    remoto.messages = DB ? DB.messages : [];     // los mensajes los maneja la otra escucha
+    DB = remoto;
   }, err => console.error('Se perdió la conexión con Firestore:', err));
+}
+
+/* Escucha del chat: llega al instante porque cada mensaje es un documento diminuto */
+function escucharMensajes(){
+  onSnapshot(query(COL_MSG, orderBy('orden')), snap => {
+    if(!DB) return;
+    DB.messages = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    if(currentUser && activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
+  }, err => console.error('Se perdió la conexión con el chat:', err));
 }
 
 /* ---------- Utilidades ---------- */
@@ -636,11 +659,13 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
   DB.subjects = DB.subjects && DB.subjects.length ? DB.subjects : SUBJECTS.slice();
   DB.marks = DB.marks || {};
   DB.obs = DB.obs || {};
+  DB.messages = DB.messages || [];
   DB.students.forEach(s=>{ if(!s.curso) s.curso = '101'; });
   $('boot').hidden = true;
   $('viewLogin').hidden = false;
   renderDemoTable();
   escucharCambios();
+  escucharMensajes();
 })();
 
 function renderDemoTable(){
@@ -850,13 +875,14 @@ async function sendMessage(){
   const text = input.value.trim();
   if(!text || !activeContact) return;
   input.value = '';
-  // Traigo la versión más reciente para no borrar un mensaje que otro acabe de enviar
-  const fresco = await storeGet();
-  if(fresco) DB = fresco;
-  DB.messages = DB.messages || [];
-  DB.messages.push({id:uid('m'), from:currentUser.id, to:activeContact, text, time:nowStamp()});
-  await save();
-  renderThread();
+  // No esperamos nada: Firestore lo pinta al instante y lo sincroniza en segundo plano
+  addDoc(COL_MSG, {
+    from: currentUser.id,
+    to: activeContact,
+    text,
+    time: nowStamp(),
+    orden: Date.now()
+  }).catch(e => { console.error(e); toast('El mensaje no se pudo enviar', true); });
 }
 
 /* =====================================================================
@@ -1434,7 +1460,7 @@ function drawUsers(){
     const ok = await confirmDialog('Eliminar cuenta', `${u.name} perderá el acceso al portal. Sus mensajes se borrarán.`, 'Eliminar');
     if(!ok) return;
     DB.users = DB.users.filter(x=>x.id!==u.id);
-    DB.messages = DB.messages.filter(m=>m.from!==u.id && m.to!==u.id);
+    await borrarMensajesDe(u.id);
     await save(); toast('Cuenta eliminada'); renderAdmin($('main'));
   });
 }
