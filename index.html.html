@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cuaderno · Portal Escolar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1E3A34; --ink-light:#2C4F47;
+    --paper:#F7F4EC; --paper-dark:#EFEADA;
+    --amber:#E0A458; --amber-dark:#C6873A;
+    --pen:#3B5BA5; --pen-dark:#2C447F;
+    --text:#22302B; --text-soft:#5B6660;
+    --line:#C9C2AE; --red:#B4443A; --green:#3F7D5B;
+    --radius:10px; --shadow:0 8px 24px rgba(30,58,52,0.12);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0; background:var(--paper-dark); color:var(--text); font-family:'Inter',sans-serif; -webkit-font-smoothing:antialiased;}
+  h1,h2,h3,h4{font-family:'Bitter',serif; letter-spacing:-0.01em;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  button{font-family:inherit; cursor:pointer;}
+  input,select,textarea{font-family:inherit;}
+  ::selection{background:var(--amber); color:var(--ink);}
+  :focus-visible{outline:2.5px solid var(--amber); outline-offset:2px;}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important;}}
+
+  /* ---------- ACCESO ---------- */
+  .gate{
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+    background:
+      radial-gradient(circle at 15% 20%, rgba(224,164,88,0.14), transparent 45%),
+      radial-gradient(circle at 85% 80%, rgba(59,91,165,0.12), transparent 45%),
+      var(--ink);
+  }
+  .gate[hidden]{display:none;}
+  .id-card{width:100%; max-width:450px; background:var(--paper); border-radius:14px; box-shadow:0 30px 60px rgba(0,0,0,0.35); overflow:hidden; border:1px solid rgba(0,0,0,0.06);}
+  .id-card__top{background:var(--ink); color:var(--paper); padding:22px 26px; display:flex; align-items:center; gap:14px;}
+  .id-card__badge{width:44px;height:44px;border-radius:50%; background:var(--amber); display:flex;align-items:center;justify-content:center; font-family:'Bitter',serif; font-weight:800; font-size:18px; color:var(--ink); flex-shrink:0;}
+  .id-card__top h1{margin:0; font-size:20px; color:var(--paper);}
+  .id-card__top p{margin:2px 0 0; font-size:12.5px; color:#C9D4CF;}
+  .id-card__body{padding:26px;}
+  .field-label{font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-soft); font-weight:600; margin-bottom:7px; display:block;}
+  .txt{width:100%; padding:12px 14px; border-radius:8px; border:1.5px solid var(--line); font-size:14.5px; background:#fff; color:var(--text); margin-bottom:16px;}
+  .txt.code{font-family:'IBM Plex Mono',monospace; letter-spacing:.06em; text-transform:uppercase; font-weight:600;}
+  .btn-primary{width:100%; padding:13px 14px; border-radius:8px; border:none; background:var(--ink); color:var(--paper); font-weight:600; font-size:14.5px; transition:background .15s ease;}
+  .btn-primary:hover{background:var(--ink-light);}
+  .link-btn{background:none; border:none; color:var(--pen); font-size:13px; font-weight:600; padding:8px 0; text-decoration:underline; text-underline-offset:3px;}
+  .link-btn:hover{color:var(--pen-dark);}
+  .gate-foot{display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:10px; flex-wrap:wrap;}
+  .alert{font-size:13px; padding:11px 13px; border-radius:8px; margin-bottom:16px; line-height:1.45; border-left:3px solid var(--red); background:rgba(180,68,58,0.09); color:#7E2F28;}
+  .alert.ok{border-left-color:var(--green); background:rgba(63,125,91,0.1); color:#2C5A41;}
+  .alert[hidden]{display:none;}
+  .demo-box{margin-top:18px; border-top:1px dashed var(--line); padding-top:14px;}
+  .demo-box summary{font-size:12px; color:var(--text-soft); font-weight:600; cursor:pointer;}
+  .demo-box table{width:100%; border-collapse:collapse; margin-top:10px; font-size:11.5px;}
+  .demo-box td{padding:4px 6px; border-bottom:1px solid var(--paper-dark);}
+  .demo-box td:first-child{font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--ink);}
+  .gate-note{font-size:11.5px; color:#9AA69F; margin-top:14px; line-height:1.5; text-align:center;}
+
+  /* ---------- SHELL ---------- */
+  .app{display:none; min-height:100vh;}
+  .app.active{display:flex;}
+  .spine{width:20px; background:var(--ink); position:relative; flex-shrink:0; background-image:repeating-linear-gradient(to bottom, transparent 0 22px, rgba(0,0,0,0.25) 22px 24px);}
+  .spine span{position:absolute; width:10px;height:10px;border-radius:50%; background:var(--paper-dark); left:5px;}
+  .sidebar{width:238px; flex-shrink:0; background:var(--ink); color:var(--paper); display:flex; flex-direction:column; padding:26px 0; max-height:100vh; position:sticky; top:0;}
+  .sidebar__user{padding:0 22px 20px; border-bottom:1px solid rgba(255,255,255,0.12); margin-bottom:12px;}
+  .sidebar__user .name{font-family:'Bitter',serif; font-weight:700; font-size:16px; line-height:1.25;}
+  .sidebar__user .code{font-family:'IBM Plex Mono',monospace; font-size:11px; color:#8FA39C; margin-top:3px; letter-spacing:.05em;}
+  .role-pill{display:inline-block; margin-top:8px; font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; padding:3px 9px; border-radius:20px; font-weight:700;}
+  .role-pill.profesor{background:var(--amber); color:var(--ink);}
+  .role-pill.familia{background:var(--pen); color:#fff;}
+  .tab-btn{display:flex; align-items:center; gap:11px; padding:12px 22px; color:#C9D4CF; font-size:14px; font-weight:500; border:none; background:none; text-align:left; width:100%; border-left:3px solid transparent; transition:background .12s ease;}
+  .tab-btn:hover{background:rgba(255,255,255,0.06); color:#fff;}
+  .tab-btn.active{background:var(--paper-dark); color:var(--ink); border-left-color:var(--amber); font-weight:600; border-radius:0 20px 20px 0; margin-right:10px;}
+  .tab-btn .ico{width:18px; text-align:center; flex-shrink:0; font-size:15px;}
+  .logout{margin-top:auto; padding:16px 22px 0;}
+  .logout button{width:100%; background:transparent; border:1px solid rgba(255,255,255,0.25); color:#C9D4CF; padding:10px; border-radius:8px; font-size:13px;}
+  .logout button:hover{border-color:var(--amber); color:var(--amber);}
+
+  .main{flex:1; padding:34px 40px 60px; overflow-y:auto; max-height:100vh; min-width:0;}
+  .main h2{margin:0 0 4px; font-size:26px; color:var(--ink);}
+  .subtitle{color:var(--text-soft); font-size:14px; margin-bottom:26px; line-height:1.5;}
+  .card{background:var(--paper); border-radius:var(--radius); box-shadow:var(--shadow); padding:22px; margin-bottom:18px;}
+  .card h3{margin:0 0 16px; font-size:16px; color:var(--ink);}
+  .card-head{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;}
+  .card-head h3{margin:0;}
+
+  /* ---------- FORMULARIOS ---------- */
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:14px;}
+  .form-row{margin-bottom:14px;}
+  .form-row label{display:block; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); font-weight:600; margin-bottom:6px;}
+  .form-row input, .form-row select, .form-row textarea{width:100%; padding:10px 12px; border-radius:8px; border:1.5px solid var(--line); font-size:13.5px; background:#fff; color:var(--text);}
+  .form-row select.curso{font-family:'IBM Plex Mono',monospace; font-weight:600; letter-spacing:.03em;}
+  .form-row textarea{resize:vertical; min-height:84px; line-height:1.5;}
+  .hint{font-size:11.5px; color:var(--text-soft); margin-top:8px; line-height:1.5;}
+  .btn{background:var(--ink); color:var(--paper); border:none; padding:10px 20px; border-radius:8px; font-weight:600; font-size:13px;}
+  .btn:hover{background:var(--ink-light);}
+  .btn.ghost{background:transparent; color:var(--ink); border:1.5px solid var(--line);}
+  .btn.ghost:hover{background:var(--paper-dark);}
+  .btn.danger{background:transparent; color:var(--red); border:1.5px solid rgba(180,68,58,.4);}
+  .btn.danger:hover{background:rgba(180,68,58,.08);}
+  .btn.tiny{padding:6px 11px; font-size:12px; border-radius:6px;}
+
+  /* ---------- MENSAJERÍA ---------- */
+  .msg-layout{display:flex; gap:20px; height:calc(100vh - 230px); min-height:400px;}
+  .contacts{width:225px; flex-shrink:0; overflow-y:auto; border-right:1px solid var(--line); padding-right:12px;}
+  .contact{padding:11px 12px; border-radius:8px; margin-bottom:6px; cursor:pointer; font-size:13.5px; border:none; background:none; width:100%; text-align:left; display:block;}
+  .contact:hover{background:var(--paper-dark);}
+  .contact.active{background:var(--ink); color:var(--paper);}
+  .contact .nm{font-weight:600;}
+  .contact .subj{font-size:11px; opacity:.7; margin-top:2px;}
+  .thread{flex:1; display:flex; flex-direction:column; min-width:0;}
+  .thread-head{font-size:13px; color:var(--text-soft); padding-bottom:10px; border-bottom:1px solid var(--line); margin-bottom:10px;}
+  .thread-msgs{flex:1; overflow-y:auto; padding:6px 4px; display:flex; flex-direction:column; gap:10px;}
+  .bubble{max-width:72%; padding:10px 13px; border-radius:12px; font-size:13.5px; line-height:1.45; word-break:break-word;}
+  .bubble.me{align-self:flex-end; background:var(--pen); color:#fff; border-bottom-right-radius:2px;}
+  .bubble.them{align-self:flex-start; background:var(--paper-dark); border-bottom-left-radius:2px;}
+  .bubble time{display:block; font-size:10px; opacity:.7; margin-top:4px; font-family:'IBM Plex Mono',monospace;}
+  .composer{display:flex; gap:8px; margin-top:14px;}
+  .composer input{flex:1; padding:11px 15px; border-radius:22px; border:1.5px solid var(--line); font-size:13.5px; background:#fff;}
+  .composer button{padding:0 22px; border-radius:22px; border:none; background:var(--ink); color:var(--paper); font-weight:600; font-size:13px;}
+
+  /* ---------- REPORTES ---------- */
+  .report-item{border-bottom:1px solid var(--line); padding:16px 0;}
+  .report-item:first-child{padding-top:0;}
+  .report-item:last-child{border-bottom:none; padding-bottom:0;}
+  .report-item .meta{font-size:11.5px; color:var(--text-soft); margin-bottom:5px; font-family:'IBM Plex Mono',monospace;}
+  .report-item h4{margin:0 0 6px; font-size:15.5px;}
+  .report-item p{margin:0; font-size:13.5px; line-height:1.55; white-space:pre-wrap;}
+  .row-actions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+
+  /* ---------- TABLAS ---------- */
+  .table-wrap{overflow-x:auto; max-width:100%;}
+  table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  th{text-align:left; padding:10px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); border-bottom:2px solid var(--ink); font-weight:600; white-space:nowrap;}
+  td{padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  .empty{color:var(--text-soft); font-size:13.5px; font-style:italic; padding:26px 0; text-align:center;}
+
+  /* matriz de notas del curso */
+  .matrix{font-size:12.5px; min-width:max-content;}
+  .matrix th{padding:8px 7px; font-size:10px; text-align:center;}
+  .matrix th.nm{text-align:left; position:sticky; left:0; background:var(--paper); z-index:2; min-width:190px;}
+  .matrix td{padding:7px; text-align:center; white-space:nowrap;}
+  .matrix td.nm{
+    text-align:left; position:sticky; left:0; background:var(--paper); z-index:1;
+    font-weight:500; box-shadow:1px 0 0 var(--line);
+  }
+  .matrix tbody tr:hover td{background:var(--paper-dark);}
+  .matrix tbody tr:hover td.nm{background:var(--paper-dark);}
+  .n{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12.5px; color:var(--ink);}
+  .n.bad{color:var(--red);}
+  .n.none{color:var(--line);}
+  .prom{font-family:'IBM Plex Mono',monospace; font-weight:700; padding:3px 8px; border-radius:6px; background:var(--paper-dark); color:var(--ink);}
+  .prom.bad{background:rgba(180,68,58,.12); color:var(--red);}
+
+  .grade-stamp{display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:50%; border:2.5px solid var(--red); color:var(--red); font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13px; transform:rotate(-6deg);}
+  .grade-stamp.good{border-color:var(--ink); color:var(--ink);}
+  .locked-banner{display:flex; align-items:center; gap:10px; background:var(--paper-dark); border-radius:8px; padding:13px 16px; font-size:13px; color:var(--text-soft); margin-bottom:18px; border:1px dashed var(--line);}
+  .stat-strip{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px;}
+  .stat{background:var(--paper); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 20px; min-width:130px; flex:1;}
+  .stat .k{font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-soft); font-weight:600;}
+  .stat .v{font-family:'Bitter',serif; font-size:26px; font-weight:800; color:var(--ink); margin-top:4px;}
+  .stat .v.bad{color:var(--red);}
+  .tag{display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:3px 8px; border-radius:20px; background:var(--paper-dark); color:var(--text-soft);}
+  .tag.profesor{background:var(--amber); color:var(--ink);}
+  .tag.familia{background:var(--pen); color:#fff;}
+  .curso-chip{display:inline-block; font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px; padding:3px 9px; border-radius:6px; background:var(--ink); color:var(--paper); letter-spacing:.04em;}
+  .code-cell{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12.5px; color:var(--ink);}
+
+  /* boletín editable */
+  .boletin td{padding:8px 10px;}
+  .boletin input.nota{width:78px; padding:8px 10px; border-radius:7px; border:1.5px solid var(--line); font-family:'IBM Plex Mono',monospace; font-weight:600; text-align:center; background:#fff;}
+  .boletin input.nota.bad{border-color:rgba(180,68,58,.55); color:var(--red);}
+  .boletin input.obs{width:100%; min-width:200px; padding:8px 10px; border-radius:7px; border:1.5px solid var(--line); font-size:13px; background:#fff;}
+  .sticky-save{position:sticky; bottom:0; background:var(--paper); padding-top:14px; margin-top:6px; border-top:1px solid var(--line); display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+
+  /* ---------- MODAL + TOAST ---------- */
+  .modal-bg{position:fixed; inset:0; background:rgba(30,58,52,.55); display:flex; align-items:center; justify-content:center; padding:20px; z-index:60;}
+  .modal-bg[hidden]{display:none;}
+  .modal{background:var(--paper); border-radius:12px; padding:24px; max-width:420px; width:100%; box-shadow:0 24px 50px rgba(0,0,0,.3);}
+  .modal h3{margin:0 0 10px; font-size:18px;}
+  .modal p{margin:0 0 18px; font-size:13.5px; line-height:1.55; color:var(--text-soft); white-space:pre-line;}
+  .modal-actions{display:flex; gap:10px; justify-content:flex-end;}
+  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:12px 22px; border-radius:24px; font-size:13.5px; font-weight:500; box-shadow:0 10px 30px rgba(0,0,0,.3); z-index:80;}
+  .toast[hidden]{display:none;}
+  .toast.warn{background:var(--red);}
+  .boot{min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--ink); color:#C9D4CF; font-size:14px;}
+  .boot[hidden]{display:none;}
+
+  @media (max-width:880px){
+    .app.active{flex-direction:column;}
+    .spine{display:none;}
+    .sidebar{width:100%; position:static; max-height:none; padding:18px 0;}
+    .tab-btn.active{border-radius:0; margin-right:0;}
+    .main{padding:24px 18px 50px; max-height:none;}
+    .msg-layout{flex-direction:column; height:auto;}
+    .contacts{width:100%; display:flex; overflow-x:auto; gap:8px; border-right:none; border-bottom:1px solid var(--line); padding:0 0 10px;}
+    .contact{flex-shrink:0; width:auto; min-width:140px;}
+    .thread-msgs{min-height:300px;}
+    .bubble{max-width:88%;}
+    .matrix th.nm, .matrix td.nm{min-width:150px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="boot" id="boot">Abriendo el cuaderno…</div>
+
+<!-- ============ INICIO DE SESIÓN ============ -->
+<div class="gate" id="viewLogin" hidden>
+  <div class="id-card">
+    <div class="id-card__top">
+      <div class="id-card__badge">C</div>
+      <div><h1>Cuaderno</h1><p>Portal escolar · entra con tu código</p></div>
+    </div>
+    <div class="id-card__body">
+      <div class="alert" id="loginAlert" hidden></div>
+      <label class="field-label" for="loginCode">Código de acceso</label>
+      <input class="txt code" id="loginCode" type="text" placeholder="DOC-4471" autocomplete="username">
+      <label class="field-label" for="loginPass">Contraseña</label>
+      <input class="txt" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password">
+      <button class="btn-primary" id="btnLogin">Entrar al portal</button>
+      <div class="gate-foot">
+        <button class="link-btn" id="btnGoForgot">¿Olvidaste tu contraseña?</button>
+        <button class="link-btn" id="btnReset" style="color:var(--text-soft)">Restablecer datos de demo</button>
+      </div>
+      <details class="demo-box">
+        <summary>Ver cuentas de prueba</summary>
+        <table id="demoTable"></table>
+        <p class="gate-note" style="text-align:left">Palabra de recuperación de todas las cuentas de prueba: <b class="mono">cuaderno</b></p>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- ============ RECUPERAR CONTRASEÑA ============ -->
+<div class="gate" id="viewForgot" hidden>
+  <div class="id-card">
+    <div class="id-card__top">
+      <div class="id-card__badge">?</div>
+      <div><h1>Recuperar acceso</h1><p>Responde tu pregunta de seguridad</p></div>
+    </div>
+    <div class="id-card__body">
+      <div class="alert" id="forgotAlert" hidden></div>
+      <div id="forgotStep1">
+        <label class="field-label" for="fgCode">Tu código de acceso</label>
+        <input class="txt code" id="fgCode" type="text" placeholder="FAM-1057">
+        <button class="btn-primary" id="btnFgNext">Continuar</button>
+      </div>
+      <div id="forgotStep2" hidden>
+        <div class="locked-banner" style="margin-bottom:16px"><span id="fgQuestion"></span></div>
+        <label class="field-label" for="fgAnswer">Tu respuesta</label>
+        <input class="txt" id="fgAnswer" type="text" placeholder="Escribe la respuesta">
+        <label class="field-label" for="fgNew">Nueva contraseña</label>
+        <input class="txt" id="fgNew" type="password" placeholder="Mínimo 6 caracteres">
+        <label class="field-label" for="fgNew2">Repite la nueva contraseña</label>
+        <input class="txt" id="fgNew2" type="password" placeholder="Repite la contraseña">
+        <button class="btn-primary" id="btnFgSave">Guardar contraseña</button>
+      </div>
+      <div class="gate-foot"><button class="link-btn" id="btnBackLogin">Volver a iniciar sesión</button></div>
+      <p class="gate-note">¿No recuerdas tu pregunta de seguridad? Pídele a un profesor que restablezca tu contraseña desde Administración.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ APLICACIÓN ============ -->
+<div class="app" id="app">
+  <div class="spine" id="spine"></div>
+  <nav class="sidebar">
+    <div class="sidebar__user">
+      <div class="name" id="sbName">—</div>
+      <div class="code mono" id="sbCode">—</div>
+      <span class="role-pill" id="sbRole">—</span>
+    </div>
+    <div id="tabList"></div>
+    <div class="logout"><button id="btnLogout">Cerrar sesión</button></div>
+  </nav>
+  <main class="main" id="main"></main>
+</div>
+
+<div class="modal-bg" id="modalBg" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="modalTitle">Confirmar</h3>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="modalCancel">Cancelar</button>
+      <button class="btn danger" id="modalOk">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* =====================================================================
+   ALMACENAMIENTO
+   ===================================================================== */
+const KEY = 'cuaderno:db:v4';
+const memStore = {};
+const hasStore = typeof window !== 'undefined' && !!window.storage;
+let storageOk = hasStore;
+
+async function storeGet(){
+  if(hasStore){
+    try{ const r = await window.storage.get(KEY); return r && r.value ? JSON.parse(r.value) : null; }
+    catch(e){ return null; }
+  }
+  return memStore[KEY] ? JSON.parse(memStore[KEY]) : null;
+}
+async function storeSet(data){
+  const raw = JSON.stringify(data);
+  memStore[KEY] = raw;
+  if(hasStore){
+    try{ await window.storage.set(KEY, raw); storageOk = true; }catch(e){ storageOk = false; }
+  }
+}
+async function storeClear(){
+  memStore[KEY] = null;
+  if(hasStore){ try{ await window.storage.delete(KEY); }catch(e){} }
+}
+
+/* ---------- Utilidades ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = p => p + '_' + Math.random().toString(36).slice(2,8) + Date.now().toString(36).slice(-3);
+const norm = s => String(s||'').trim().toLowerCase();
+const todayStr = () => new Date().toLocaleDateString('es-CO',{day:'2-digit',month:'short'});
+const nowStamp = () => { const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+
+async function hashText(text){
+  const salted = 'cuaderno::' + text;
+  if(window.crypto && window.crypto.subtle){
+    try{
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salted));
+      return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }catch(e){}
+  }
+  let h = 0;
+  for(let i=0;i<salted.length;i++){ h = ((h<<5)-h) + salted.charCodeAt(i); h |= 0; }
+  return 'fb' + Math.abs(h).toString(36);
+}
+function makeCode(role){
+  const prefix = role === 'profesor' ? 'DOC' : 'FAM';
+  let code;
+  do{ code = prefix + '-' + Math.floor(1000 + Math.random()*8999); }
+  while(DB && DB.users.some(u=>u.code===code));
+  return code;
+}
+const tempPassword = () => 'tmp' + Math.floor(1000 + Math.random()*8999);
+
+let toastTimer = null;
+function toast(msg, warn){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (warn ? ' warn' : '');
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ t.hidden = true; }, 2800);
+}
+let modalResolve = null;
+function confirmDialog(title, text, okLabel, hideCancel){
+  $('modalTitle').textContent = title;
+  $('modalText').textContent = text;
+  $('modalOk').textContent = okLabel || 'Confirmar';
+  $('modalCancel').style.display = hideCancel ? 'none' : '';
+  $('modalBg').hidden = false;
+  return new Promise(res => { modalResolve = res; });
+}
+function closeModal(v){ $('modalBg').hidden = true; if(modalResolve){ modalResolve(v); modalResolve = null; } }
+$('modalCancel').onclick = ()=>closeModal(false);
+$('modalOk').onclick = ()=>closeModal(true);
+$('modalBg').onclick = e => { if(e.target === $('modalBg')) closeModal(false); };
+
+/* =====================================================================
+   CURSOS · 101 … 1106
+   ===================================================================== */
+const COURSES = (()=>{
+  const list = [];
+  for(let g=1; g<=11; g++) for(let s=1; s<=6; s++) list.push(String(g) + '0' + s);
+  return list;
+})();
+const gradeOf = c => String(c).length === 3 ? String(c).slice(0,1) : String(c).slice(0,2);
+const studentsIn = curso => DB.students.filter(s => s.curso === curso).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+const courseCount = curso => DB.students.filter(s => s.curso === curso).length;
+
+function courseOptions(selected, allLabel){
+  let html = allLabel ? `<option value="">${esc(allLabel)}</option>` : '';
+  let lastGrade = null;
+  COURSES.forEach(c=>{
+    const g = gradeOf(c);
+    if(g !== lastGrade){
+      if(lastGrade !== null) html += '</optgroup>';
+      html += `<optgroup label="Grado ${g}">`;
+      lastGrade = g;
+    }
+    const n = courseCount(c);
+    html += `<option value="${c}"${c===selected?' selected':''}>${c}${n ? ' · ' + n + ' est.' : ' · vacío'}</option>`;
+  });
+  return html + '</optgroup>';
+}
+function fillStudents(selectEl, curso, keepId){
+  const list = curso ? studentsIn(curso) : [];
+  selectEl.innerHTML = list.length
+    ? list.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')
+    : '<option value="">Este curso no tiene estudiantes</option>';
+  if(keepId && list.some(s=>s.id===keepId)) selectEl.value = keepId;
+}
+function linkCourse(courseId, studentId, onChange){
+  const cs = $(courseId), ss = $(studentId);
+  if(!cs || !ss) return;
+  cs.addEventListener('change', ()=>{ fillStudents(ss, cs.value); if(onChange) onChange(); });
+}
+function defaultCourse(){ return COURSES.find(c=>courseCount(c) > 0) || '101'; }
+
+/* =====================================================================
+   MATERIAS
+   ===================================================================== */
+const SUBJECTS = [
+  'Matemáticas','Química','Física','Ética','Religión','Español','Inglés',
+  'Informática','Semillero-Profundización','Educación Física','Sociales',
+  'Filosofía','Economía','Artes'
+];
+const ABBR = {
+  'Matemáticas':'Mat','Química':'Quí','Física':'Fís','Ética':'Éti','Religión':'Rel',
+  'Español':'Esp','Inglés':'Ing','Informática':'Inf','Semillero-Profundización':'Sem',
+  'Educación Física':'E.F.','Sociales':'Soc','Filosofía':'Fil','Economía':'Eco','Artes':'Art'
+};
+const abbr = s => ABBR[s] || s.slice(0,3);
+
+/* =====================================================================
+   NÓMINA INICIAL · 32 a 40 estudiantes por curso
+   ===================================================================== */
+const NOMBRES = [
+  'Juan','María','Santiago','Valentina','Andrés','Camila','Mateo','Sofía','Nicolás','Isabela',
+  'Samuel','Laura','Sebastián','Mariana','Daniel','Gabriela','Tomás','Antonia','Emiliano','Salomé',
+  'Martín','Luciana','Felipe','Sara','Diego','Manuela','Alejandro','Juliana','Simón','Paula',
+  'Esteban','Daniela','Miguel','Catalina','David','Alejandra','Julián','Natalia','Ricardo','Ximena',
+  'Óscar','Verónica','Iván','Carolina','Joaquín','Renata','Emanuel','Amelia','Cristian','Elena',
+  'Jerónimo','Antonella','Matías','Emilia','Álvaro','Valeria','Rafael','Sara Isabel','Fabián','Luisa'
+];
+const APELLIDOS = [
+  'Pérez','Gómez','Rodríguez','Martínez','López','García','Torres','Ramírez','Castro','Rojas',
+  'Moreno','Muñoz','Vargas','Ortiz','Sánchez','Herrera','Molina','Cárdenas','Beltrán','Cano',
+  'Quintero','Silva','Guerrero','Mendoza','Navarro','Salazar','Ospina','Peña','Duarte','Suárez',
+  'Bolívar','Zapata','Arias','Bermúdez','Restrepo','Cordero','Villamil','Pineda','Acosta','Lozano',
+  'Cifuentes','Aguirre','Rincón','Barrera','Camargo','Delgado','Escobar','Fajardo','Galindo','Higuera'
+];
+function rng(seed){
+  let s = seed >>> 0;
+  return ()=>{ s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+/* Estudiantes fijos, vinculados a las cuentas de familia de prueba */
+const FIJOS = [
+  {id:'st_juan',  name:'Juan Pérez',     curso:'602'},
+  {id:'st_sofia', name:'Sofía Torres',   curso:'801'},
+];
+function generarNomina(rand){
+  const out = [];
+  COURSES.forEach(curso=>{
+    const fijos = FIJOS.filter(f=>f.curso===curso);
+    out.push(...fijos);
+    const objetivo = 32 + Math.floor(rand()*9);          // entre 32 y 40 por curso
+    const usados = new Set(fijos.map(f=>f.name));
+    let intentos = 0;
+    while(usados.size < objetivo && intentos < 4000){
+      intentos++;
+      const nombre = NOMBRES[Math.floor(rand()*NOMBRES.length)];
+      const ap1 = APELLIDOS[Math.floor(rand()*APELLIDOS.length)];
+      const ap2 = APELLIDOS[Math.floor(rand()*APELLIDOS.length)];
+      if(ap1 === ap2) continue;
+      const full = `${nombre} ${ap1} ${ap2}`;
+      if(usados.has(full)) continue;
+      usados.add(full);
+      out.push({id:uid('st'), name:full, curso});
+    }
+  });
+  return out;
+}
+/* Notas iniciales: las 14 materias del periodo en curso para cada estudiante */
+function generarNotas(students, rand, term){
+  const marks = {};
+  students.forEach(s=>{
+    const nivel = 3.2 + rand()*1.2;                      // cada estudiante tiene su nivel
+    const fila = {};
+    SUBJECTS.forEach(m=>{
+      let v = nivel + (rand()-0.5)*1.6;
+      v = Math.max(1.5, Math.min(5, v));
+      fila[m] = Math.round(v*10)/10;
+    });
+    marks[s.id] = {[term]: fila};
+  });
+  return marks;
+}
+
+/* =====================================================================
+   DATOS SEMILLA
+   ===================================================================== */
+const DEMO_PASS = 'clave123';
+const DEMO_ANSWER = 'cuaderno';
+const RECOVERY_Q = '¿Cuál es la palabra clave que te dio el colegio?';
+const TERMS = ['T1','T2','T3'];
+const TERM_ACTUAL = 'T2';
+
+async function seedDB(){
+  const ph = await hashText(DEMO_PASS);
+  const ah = await hashText(DEMO_ANSWER);
+  const rand = rng(20260806);
+  const students = generarNomina(rand);
+  return {
+    subjects: SUBJECTS.slice(),
+    terms: TERMS.slice(),
+    students,
+    marks: generarNotas(students, rand, TERM_ACTUAL),
+    obs: {},
+    users:[
+      {id:'u_maria',  code:'DOC-4471', name:'María Gómez',     role:'profesor', subject:'Matemáticas', passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:[]},
+      {id:'u_carlos', code:'DOC-8820', name:'Carlos Ruiz',     role:'profesor', subject:'Sociales',    passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:[]},
+      {id:'u_lucia',  code:'DOC-3096', name:'Lucía Fernández', role:'profesor', subject:'Química',     passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:[]},
+      {id:'u_ana',    code:'FAM-1057', name:'Ana Pérez',       role:'familia',  subject:'',            passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:['st_juan']},
+      {id:'u_diego',  code:'FAM-6314', name:'Diego Torres',    role:'familia',  subject:'',            passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:['st_sofia']},
+    ],
+    messages:[
+      {id:uid('m'), from:'u_maria',  to:'u_carlos', text:'¿Viste el informe de conducta de 602?', time:'09:12'},
+      {id:uid('m'), from:'u_carlos', to:'u_maria',  text:'Sí, lo reviso hoy en la reunión de las 3.', time:'09:15'},
+    ],
+    reports:[
+      {id:uid('r'), studentId:'st_juan',  authorId:'u_maria',  title:'Progreso en Matemáticas', body:'Juan mejoró notablemente en fracciones. Recomiendo reforzar problemas con decimales en casa.', date:'10 jul'},
+      {id:uid('r'), studentId:'st_sofia', authorId:'u_carlos', title:'Participación en clase',  body:'Sofía participa activamente en los debates de Sociales. Buen manejo de fuentes.', date:'08 jul'},
+    ],
+  };
+}
+
+/* =====================================================================
+   ESTADO Y ACCESO A NOTAS
+   ===================================================================== */
+let DB = null;
+let currentUser = null;
+let activeTab = null;
+let activeContact = null;
+let fgUser = null;
+
+const save = () => storeSet(DB);
+const userById = id => DB.users.find(u=>u.id===id);
+const studentById = id => DB.students.find(s=>s.id===id);
+const studentName = id => (studentById(id)||{}).name || 'Estudiante eliminado';
+const studentCourse = id => (studentById(id)||{}).curso || '—';
+const userName = id => (userById(id)||{}).name || 'Usuario eliminado';
+const isProfe = () => currentUser && currentUser.role === 'profesor';
+const myStudents = () => (currentUser.studentIds||[]).map(studentById).filter(Boolean);
+
+function markOf(sid, term, subject){
+  const t = DB.marks[sid] && DB.marks[sid][term];
+  return t && typeof t[subject] === 'number' ? t[subject] : null;
+}
+function setMark(sid, term, subject, value){
+  if(!DB.marks[sid]) DB.marks[sid] = {};
+  if(!DB.marks[sid][term]) DB.marks[sid][term] = {};
+  if(value === null) delete DB.marks[sid][term][subject];
+  else DB.marks[sid][term][subject] = value;
+}
+function obsOf(sid, term, subject){
+  const t = DB.obs[sid] && DB.obs[sid][term];
+  return t && t[subject] ? t[subject] : '';
+}
+function setObs(sid, term, subject, text){
+  if(!text){
+    if(DB.obs[sid] && DB.obs[sid][term]) delete DB.obs[sid][term][subject];
+    return;
+  }
+  if(!DB.obs[sid]) DB.obs[sid] = {};
+  if(!DB.obs[sid][term]) DB.obs[sid][term] = {};
+  DB.obs[sid][term][subject] = text;
+}
+function avgOf(sid, term){
+  const vals = DB.subjects.map(m=>markOf(sid, term, m)).filter(v=>v !== null);
+  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+}
+function avgCourse(curso, term){
+  const vals = studentsIn(curso).map(s=>avgOf(s.id, term)).filter(v=>v !== null);
+  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+}
+const fmt = v => v === null ? '—' : v.toFixed(1);
+
+/* =====================================================================
+   ARRANQUE
+   ===================================================================== */
+(async function boot(){
+  DB = await storeGet();
+  if(!DB || !DB.users || !DB.users.length || !DB.marks){
+    DB = await seedDB();
+    await save();
+  }
+  DB.terms = DB.terms || TERMS.slice();
+  DB.subjects = DB.subjects && DB.subjects.length ? DB.subjects : SUBJECTS.slice();
+  DB.marks = DB.marks || {};
+  DB.obs = DB.obs || {};
+  DB.students.forEach(s=>{ if(!s.curso) s.curso = '101'; });
+  $('boot').hidden = true;
+  $('viewLogin').hidden = false;
+  renderDemoTable();
+})();
+
+function renderDemoTable(){
+  $('demoTable').innerHTML = DB.users.slice(0,5).map(u=>`
+    <tr><td>${esc(u.code)}</td><td>${esc(u.name)}</td>
+    <td>${u.role==='profesor' ? 'Profesor' : 'Familia'}</td>
+    <td class="mono">${esc(DEMO_PASS)}</td></tr>`).join('');
+}
+
+/* =====================================================================
+   ACCESO
+   ===================================================================== */
+function showAlert(el, msg, ok){
+  const box = $(el);
+  box.textContent = msg;
+  box.className = 'alert' + (ok ? ' ok' : '');
+  box.hidden = !msg;
+}
+function gate(view){
+  ['viewLogin','viewForgot'].forEach(v => $(v).hidden = v !== view);
+  $('app').classList.remove('active');
+}
+$('btnLogin').onclick = doLogin;
+$('loginPass').onkeydown = e => { if(e.key === 'Enter') doLogin(); };
+$('loginCode').onkeydown = e => { if(e.key === 'Enter') $('loginPass').focus(); };
+
+async function doLogin(){
+  const code = $('loginCode').value.trim().toUpperCase();
+  const pass = $('loginPass').value;
+  if(!code || !pass) return showAlert('loginAlert','Escribe tu código y tu contraseña.');
+  const user = DB.users.find(u=>u.code.toUpperCase() === code);
+  const ph = await hashText(pass);
+  if(!user || user.passHash !== ph){
+    return showAlert('loginAlert','El código o la contraseña no coinciden. Revísalos e inténtalo otra vez.');
+  }
+  showAlert('loginAlert','');
+  $('loginPass').value = '';
+  currentUser = user;
+  enterApp();
+}
+$('btnGoForgot').onclick = ()=>{
+  showAlert('forgotAlert','');
+  $('forgotStep1').hidden = false; $('forgotStep2').hidden = true;
+  $('fgCode').value=''; $('fgAnswer').value=''; $('fgNew').value=''; $('fgNew2').value='';
+  fgUser = null;
+  gate('viewForgot');
+};
+$('btnBackLogin').onclick = ()=>{ showAlert('loginAlert',''); gate('viewLogin'); };
+$('btnFgNext').onclick = ()=>{
+  const code = $('fgCode').value.trim().toUpperCase();
+  const user = DB.users.find(u=>u.code.toUpperCase()===code);
+  if(!user) return showAlert('forgotAlert','No existe una cuenta con ese código.');
+  if(!user.recQ || !user.recHash){
+    return showAlert('forgotAlert','Esta cuenta aún no tiene pregunta de seguridad. Pide a un profesor que restablezca tu contraseña.');
+  }
+  fgUser = user;
+  showAlert('forgotAlert','');
+  $('fgQuestion').textContent = user.recQ;
+  $('forgotStep1').hidden = true; $('forgotStep2').hidden = false;
+  $('fgAnswer').focus();
+};
+$('btnFgSave').onclick = async ()=>{
+  if(!fgUser) return;
+  const ans = $('fgAnswer').value, p1 = $('fgNew').value, p2 = $('fgNew2').value;
+  if(!ans) return showAlert('forgotAlert','Escribe la respuesta a tu pregunta de seguridad.');
+  if(p1.length < 6) return showAlert('forgotAlert','La nueva contraseña necesita al menos 6 caracteres.');
+  if(p1 !== p2) return showAlert('forgotAlert','Las dos contraseñas no son iguales.');
+  if(await hashText(norm(ans)) !== fgUser.recHash) return showAlert('forgotAlert','La respuesta no coincide con la registrada.');
+  fgUser.passHash = await hashText(p1);
+  await save();
+  showAlert('forgotAlert','');
+  gate('viewLogin');
+  $('loginCode').value = fgUser.code;
+  showAlert('loginAlert','Contraseña actualizada. Ya puedes entrar con la nueva.', true);
+  fgUser = null;
+};
+$('btnReset').onclick = async ()=>{
+  const ok = await confirmDialog('Restablecer datos de demo',
+    'Se borra todo lo que hayas creado (estudiantes, cuentas, notas, reportes y mensajes) y vuelven los datos de ejemplo. No se puede deshacer.',
+    'Sí, restablecer');
+  if(!ok) return;
+  toast('Generando el colegio…');
+  await storeClear();
+  DB = await seedDB();
+  await save();
+  renderDemoTable();
+  $('loginCode').value=''; $('loginPass').value='';
+  showAlert('loginAlert','Datos de demo restablecidos.', true);
+};
+$('btnLogout').onclick = ()=>{
+  currentUser = null; activeTab = null; activeContact = null;
+  $('app').classList.remove('active');
+  $('loginCode').value=''; $('loginPass').value='';
+  showAlert('loginAlert','');
+  gate('viewLogin');
+};
+
+/* =====================================================================
+   SHELL
+   ===================================================================== */
+const TABS_PROFESOR = [
+  {id:'mensajeria', ico:'✉', label:'Mensajería'},
+  {id:'cursos',     ico:'▦', label:'Cursos'},
+  {id:'notas',      ico:'✎', label:'Notas'},
+  {id:'reportes',   ico:'📋', label:'Reportes'},
+  {id:'admin',      ico:'⚙', label:'Administración'},
+  {id:'cuenta',     ico:'🔑', label:'Mi cuenta'},
+];
+const TABS_FAMILIA = [
+  {id:'notas',    ico:'✎', label:'Notas'},
+  {id:'reportes', ico:'📋', label:'Reportes'},
+  {id:'cuenta',   ico:'🔑', label:'Mi cuenta'},
+];
+
+function enterApp(){
+  $('viewLogin').hidden = true; $('viewForgot').hidden = true;
+  $('app').classList.add('active');
+  $('sbName').textContent = currentUser.name;
+  $('sbCode').textContent = currentUser.code;
+  const pill = $('sbRole');
+  pill.textContent = isProfe() ? 'Profesor' : 'Familia';
+  pill.className = 'role-pill ' + currentUser.role;
+
+  const spine = $('spine');
+  spine.innerHTML = '';
+  for(let i=0;i<26;i++){
+    const s = document.createElement('span');
+    s.style.top = (20 + i*32) + 'px';
+    spine.appendChild(s);
+  }
+  const tabs = isProfe() ? TABS_PROFESOR : TABS_FAMILIA;
+  $('tabList').innerHTML = tabs.map(t=>`
+    <button class="tab-btn" data-tab="${t.id}"><span class="ico">${t.ico}</span> ${t.label}</button>`).join('');
+  $('tabList').querySelectorAll('.tab-btn').forEach(b=>{ b.onclick = ()=>showTab(b.dataset.tab); });
+
+  showTab(isProfe() ? 'cursos' : 'notas');
+  if(!storageOk) toast('Sin almacenamiento: los cambios durarán solo esta sesión.', true);
+}
+function showTab(tab){
+  const allowed = (isProfe() ? TABS_PROFESOR : TABS_FAMILIA).some(t=>t.id===tab);
+  if(!allowed) return;                       // control de permisos por rol
+  activeTab = tab;
+  $('tabList').querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+  const main = $('main');
+  main.scrollTop = 0;
+  ({mensajeria:renderMensajeria, cursos:renderCursos, notas:renderNotas,
+    reportes:renderReportes, admin:renderAdmin, cuenta:renderCuenta})[tab](main);
+}
+
+/* =====================================================================
+   MENSAJERÍA · solo profesores
+   ===================================================================== */
+function renderMensajeria(main){
+  if(!isProfe()) return;
+  const colegas = DB.users.filter(u=>u.role==='profesor' && u.id!==currentUser.id);
+  if(!colegas.length){
+    main.innerHTML = `<h2>Mensajería</h2>
+      <p class="subtitle">Conversaciones privadas entre el cuerpo docente.</p>
+      <div class="card"><p class="empty">Todavía no hay otros profesores registrados. Agrega uno desde Administración.</p></div>`;
+    return;
+  }
+  if(!activeContact || !colegas.some(c=>c.id===activeContact)) activeContact = colegas[0].id;
+
+  main.innerHTML = `
+    <h2>Mensajería entre profesores</h2>
+    <p class="subtitle">Privado para el cuerpo docente. Las familias no tienen acceso a esta sección.</p>
+    <div class="card msg-layout">
+      <div class="contacts" id="contacts"></div>
+      <div class="thread">
+        <div class="thread-head" id="threadHead"></div>
+        <div class="thread-msgs" id="threadMsgs"></div>
+        <div class="composer">
+          <input id="msgInput" type="text" placeholder="Escribe un mensaje…" autocomplete="off">
+          <button id="btnSend">Enviar</button>
+        </div>
+      </div>
+    </div>`;
+
+  $('contacts').innerHTML = colegas.map(c=>{
+    const last = DB.messages.filter(m=>(m.from===currentUser.id&&m.to===c.id)||(m.from===c.id&&m.to===currentUser.id)).slice(-1)[0];
+    return `<button class="contact ${c.id===activeContact?'active':''}" data-id="${c.id}">
+      <div class="nm">${esc(c.name)}</div>
+      <div class="subj">${last ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'') : esc(c.subject||'Profesor')}</div>
+    </button>`;
+  }).join('');
+  $('contacts').querySelectorAll('.contact').forEach(b=>{
+    b.onclick = ()=>{ activeContact = b.dataset.id; renderMensajeria(main); };
+  });
+  const c = userById(activeContact);
+  $('threadHead').textContent = c ? `${c.name} · ${c.subject || 'Profesor'}` : '';
+  $('btnSend').onclick = sendMessage;
+  $('msgInput').onkeydown = e => { if(e.key==='Enter') sendMessage(); };
+  renderThread();
+  $('msgInput').focus();
+}
+function renderThread(){
+  const box = $('threadMsgs');
+  const msgs = DB.messages.filter(m =>
+    (m.from===currentUser.id && m.to===activeContact) || (m.from===activeContact && m.to===currentUser.id));
+  box.innerHTML = msgs.length ? msgs.map(m=>`
+    <div class="bubble ${m.from===currentUser.id?'me':'them'}">${esc(m.text)}<time>${esc(m.time)}</time></div>`).join('')
+    : '<p class="empty">Aún no hay mensajes en esta conversación. Escribe el primero.</p>';
+  box.scrollTop = box.scrollHeight;
+}
+async function sendMessage(){
+  const input = $('msgInput');
+  const text = input.value.trim();
+  if(!text || !activeContact) return;
+  DB.messages.push({id:uid('m'), from:currentUser.id, to:activeContact, text, time:nowStamp()});
+  input.value = '';
+  await save();
+  renderThread();
+}
+
+/* =====================================================================
+   CURSOS · planilla del curso con las 14 materias
+   ===================================================================== */
+let cursoSel = null, cursoTerm = TERM_ACTUAL;
+function renderCursos(main){
+  if(!isProfe()) return;
+  if(!cursoSel) cursoSel = defaultCourse();
+  main.innerHTML = `
+    <h2>Cursos</h2>
+    <p class="subtitle">Elige un curso (101 a 1106) y verás su planilla: cada estudiante con la nota de las ${DB.subjects.length} materias.</p>
+    <div class="card">
+      <div class="grid">
+        <div class="form-row" style="margin:0"><label for="cSel">Curso</label>
+          <select class="curso" id="cSel">${courseOptions(cursoSel)}</select></div>
+        <div class="form-row" style="margin:0"><label for="cTerm">Periodo</label>
+          <select id="cTerm">${DB.terms.map(t=>`<option${t===cursoTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
+      </div>
+    </div>
+    <div id="cursoStats"></div>
+    <div class="card" id="cursoPanel"></div>`;
+  $('cSel').onchange = ()=>{ cursoSel = $('cSel').value; drawCursoPanel(); };
+  $('cTerm').onchange = ()=>{ cursoTerm = $('cTerm').value; drawCursoPanel(); };
+  drawCursoPanel();
+}
+function drawCursoPanel(){
+  const list = studentsIn(cursoSel);
+  const prom = avgCourse(cursoSel, cursoTerm);
+  const perdiendo = list.filter(s=>{ const a = avgOf(s.id, cursoTerm); return a !== null && a < 3; }).length;
+
+  $('cursoStats').innerHTML = `
+    <div class="stat-strip">
+      <div class="stat"><div class="k">Estudiantes</div><div class="v">${list.length}</div></div>
+      <div class="stat"><div class="k">Promedio del curso</div><div class="v ${prom!==null&&prom<3?'bad':''}">${fmt(prom)}</div></div>
+      <div class="stat"><div class="k">Con promedio bajo 3.0</div><div class="v ${perdiendo?'bad':''}">${perdiendo}</div></div>
+      <div class="stat"><div class="k">Materias</div><div class="v">${DB.subjects.length}</div></div>
+    </div>`;
+
+  const panel = $('cursoPanel');
+  if(!list.length){
+    panel.innerHTML = `<div class="card-head"><h3>Curso <span class="curso-chip">${esc(cursoSel)}</span></h3></div>
+      <p class="empty">Este curso no tiene estudiantes matriculados. Agrégalos desde Administración.</p>`;
+    return;
+  }
+  panel.innerHTML = `
+    <div class="card-head">
+      <h3>Planilla del curso <span class="curso-chip">${esc(cursoSel)}</span></h3>
+      <span class="tag">Periodo ${esc(cursoTerm)}</span>
+    </div>
+    <div class="table-wrap"><table class="matrix">
+      <thead><tr>
+        <th class="nm">Estudiante</th>
+        ${DB.subjects.map(m=>`<th title="${esc(m)}">${esc(abbr(m))}</th>`).join('')}
+        <th>Prom.</th><th></th>
+      </tr></thead>
+      <tbody>${list.map(s=>{
+        const a = avgOf(s.id, cursoTerm);
+        return `<tr>
+          <td class="nm">${esc(s.name)}</td>
+          ${DB.subjects.map(m=>{
+            const v = markOf(s.id, cursoTerm, m);
+            return `<td><span class="n ${v===null?'none':(v<3?'bad':'')}">${v===null?'—':v.toFixed(1)}</span></td>`;
+          }).join('')}
+          <td><span class="prom ${a!==null&&a<3?'bad':''}">${fmt(a)}</span></td>
+          <td><button class="btn ghost tiny" data-edit="${s.id}">Editar</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+    <p class="hint">Pasa el cursor por los títulos abreviados para ver el nombre completo de la materia. Desliza la tabla hacia el lado para ver todas.</p>`;
+
+  panel.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>{
+    notaCurso = cursoSel; notaStudent = b.dataset.edit; notaTerm = cursoTerm;
+    showTab('notas');
+  });
+}
+
+/* =====================================================================
+   NOTAS · boletín por estudiante
+   ===================================================================== */
+let notaCurso = null, notaStudent = null, notaTerm = TERM_ACTUAL;
+
+function renderNotas(main){
+  return isProfe() ? renderNotasProfe(main) : renderNotasFamilia(main);
+}
+
+function renderNotasProfe(main){
+  if(!notaCurso) notaCurso = defaultCourse();
+  const enCurso = studentsIn(notaCurso);
+  if(!notaStudent || !enCurso.some(s=>s.id===notaStudent)) notaStudent = enCurso.length ? enCurso[0].id : null;
+
+  main.innerHTML = `
+    <h2>Notas</h2>
+    <p class="subtitle">Elige curso y estudiante: aparecen las ${DB.subjects.length} materias con su nota y su observación, listas para editar.</p>
+    <div class="card">
+      <div class="grid">
+        <div class="form-row" style="margin:0"><label for="nCurso">Curso</label>
+          <select class="curso" id="nCurso">${courseOptions(notaCurso)}</select></div>
+        <div class="form-row" style="margin:0"><label for="nStudent">Estudiante</label>
+          <select id="nStudent"></select></div>
+        <div class="form-row" style="margin:0"><label for="nTerm">Periodo</label>
+          <select id="nTerm">${DB.terms.map(t=>`<option${t===notaTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
+      </div>
+    </div>
+    <div id="notaPanel"></div>`;
+
+  fillStudents($('nStudent'), notaCurso, notaStudent);
+  $('nCurso').onchange = ()=>{
+    notaCurso = $('nCurso').value;
+    fillStudents($('nStudent'), notaCurso);
+    notaStudent = $('nStudent').value || null;
+    drawBoletin();
+  };
+  $('nStudent').onchange = ()=>{ notaStudent = $('nStudent').value || null; drawBoletin(); };
+  $('nTerm').onchange = ()=>{ notaTerm = $('nTerm').value; drawBoletin(); };
+  drawBoletin();
+}
+
+function drawBoletin(){
+  const panel = $('notaPanel');
+  if(!notaStudent){
+    panel.innerHTML = `<div class="card"><p class="empty">Este curso no tiene estudiantes. Elige otro curso o matricula uno desde Administración.</p></div>`;
+    return;
+  }
+  const s = studentById(notaStudent);
+  const a = avgOf(s.id, notaTerm);
+  const perdidas = DB.subjects.filter(m=>{ const v = markOf(s.id, notaTerm, m); return v !== null && v < 3; }).length;
+  const sinNota = DB.subjects.filter(m=>markOf(s.id, notaTerm, m) === null).length;
+
+  panel.innerHTML = `
+    <div class="stat-strip">
+      <div class="stat"><div class="k">Promedio ${esc(notaTerm)}</div><div class="v ${a!==null&&a<3?'bad':''}">${fmt(a)}</div></div>
+      <div class="stat"><div class="k">Materias perdidas</div><div class="v ${perdidas?'bad':''}">${perdidas}</div></div>
+      <div class="stat"><div class="k">Sin calificar</div><div class="v">${sinNota}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h3>${esc(s.name)} <span class="curso-chip">${esc(s.curso)}</span></h3>
+        <span class="tag">Periodo ${esc(notaTerm)}</span>
+      </div>
+      <div class="table-wrap"><table class="boletin">
+        <thead><tr><th>Materia</th><th>Nota (1.0 – 5.0)</th><th>Observación</th></tr></thead>
+        <tbody>${DB.subjects.map((m,i)=>{
+          const v = markOf(s.id, notaTerm, m);
+          return `<tr>
+            <td>${esc(m)}</td>
+            <td><input class="nota ${v!==null&&v<3?'bad':''}" data-m="${i}" type="number" min="1" max="5" step="0.1"
+                   value="${v===null?'':v.toFixed(1)}" placeholder="—"></td>
+            <td><input class="obs" data-o="${i}" type="text" value="${esc(obsOf(s.id, notaTerm, m))}" placeholder="Comentario para la familia"></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+      <div class="sticky-save">
+        <button class="btn" id="btnSaveBoletin">Guardar boletín</button>
+        <button class="btn ghost" id="btnClearBoletin">Vaciar notas del periodo</button>
+        <span class="hint" style="margin:0">Deja una casilla en blanco para dejar la materia sin calificar.</span>
+      </div>
+    </div>`;
+
+  panel.querySelectorAll('input.nota').forEach(inp=>{
+    inp.oninput = ()=>{
+      const v = parseFloat(inp.value);
+      inp.classList.toggle('bad', !isNaN(v) && v < 3);
+    };
+  });
+  $('btnSaveBoletin').onclick = saveBoletin;
+  $('btnClearBoletin').onclick = async ()=>{
+    const ok = await confirmDialog('Vaciar notas',
+      `Se borrarán las ${DB.subjects.length} notas de ${s.name} en el periodo ${notaTerm}.`, 'Vaciar');
+    if(!ok) return;
+    if(DB.marks[s.id]) delete DB.marks[s.id][notaTerm];
+    if(DB.obs[s.id]) delete DB.obs[s.id][notaTerm];
+    await save(); toast('Notas del periodo borradas'); drawBoletin();
+  };
+}
+
+async function saveBoletin(){
+  const s = studentById(notaStudent);
+  let invalidas = 0;
+  DB.subjects.forEach((m,i)=>{
+    const inp = document.querySelector(`input.nota[data-m="${i}"]`);
+    const obs = document.querySelector(`input.obs[data-o="${i}"]`);
+    const raw = inp.value.trim();
+    if(raw === ''){ setMark(s.id, notaTerm, m, null); }
+    else{
+      const v = parseFloat(raw);
+      if(isNaN(v) || v < 1 || v > 5){ invalidas++; return; }
+      setMark(s.id, notaTerm, m, Math.round(v*10)/10);
+    }
+    setObs(s.id, notaTerm, m, obs.value.trim());
+  });
+  await save();
+  if(invalidas) toast(`${invalidas} nota(s) fuera del rango 1.0–5.0 no se guardaron.`, true);
+  else toast('Boletín guardado');
+  drawBoletin();
+}
+
+/* --------- Notas para la familia (solo lectura) --------- */
+let famTerm = TERM_ACTUAL, famStudent = null;
+function renderNotasFamilia(main){
+  const hijos = myStudents();
+  if(!hijos.length){
+    main.innerHTML = `<h2>Notas</h2><div class="card"><p class="empty">Tu cuenta todavía no tiene un estudiante vinculado. Pídele a un profesor que lo asigne.</p></div>`;
+    return;
+  }
+  if(!famStudent || !hijos.some(h=>h.id===famStudent)) famStudent = hijos[0].id;
+  const s = studentById(famStudent);
+  const a = avgOf(s.id, famTerm);
+  const perdidas = DB.subjects.filter(m=>{ const v = markOf(s.id, famTerm, m); return v !== null && v < 3; }).length;
+
+  main.innerHTML = `
+    <h2>Notas de ${esc(s.name)}</h2>
+    <p class="subtitle">Curso ${esc(s.curso)} · boletín de las ${DB.subjects.length} materias. Solo lectura.</p>
+    <div class="locked-banner">🔒 Solo ves las notas del estudiante vinculado a tu cuenta.</div>
+
+    <div class="card">
+      <div class="grid">
+        ${hijos.length > 1 ? `<div class="form-row" style="margin:0"><label for="famSt">Estudiante</label>
+          <select id="famSt">${hijos.map(h=>`<option value="${h.id}"${h.id===famStudent?' selected':''}>${esc(h.name)}</option>`).join('')}</select></div>` : ''}
+        <div class="form-row" style="margin:0"><label for="famTerm">Periodo</label>
+          <select id="famTerm">${DB.terms.map(t=>`<option${t===famTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
+      </div>
+    </div>
+
+    <div class="stat-strip">
+      <div class="stat"><div class="k">Promedio ${esc(famTerm)}</div><div class="v ${a!==null&&a<3?'bad':''}">${fmt(a)}</div></div>
+      <div class="stat"><div class="k">Materias perdidas</div><div class="v ${perdidas?'bad':''}">${perdidas}</div></div>
+      <div class="stat"><div class="k">Materias</div><div class="v">${DB.subjects.length}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Materia</th><th>Nota</th><th>Observación del profesor</th></tr></thead>
+        <tbody>${DB.subjects.map(m=>{
+          const v = markOf(s.id, famTerm, m);
+          const o = obsOf(s.id, famTerm, m);
+          return `<tr>
+            <td>${esc(m)}</td>
+            <td><span class="grade-stamp ${v!==null&&v>=3?'good':''}">${v===null?'—':v.toFixed(1)}</span></td>
+            <td style="color:var(--text-soft)">${o ? esc(o) : '—'}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>`;
+
+  if($('famSt')) $('famSt').onchange = ()=>{ famStudent = $('famSt').value; renderNotasFamilia(main); };
+  $('famTerm').onchange = ()=>{ famTerm = $('famTerm').value; renderNotasFamilia(main); };
+}
+
+/* =====================================================================
+   REPORTES
+   ===================================================================== */
+let editingReport = null;
+function renderReportes(main){
+  const profe = isProfe();
+  const mine = profe ? null : (currentUser.studentIds || []);
+  const list = profe ? DB.reports : DB.reports.filter(r=>mine.includes(r.studentId));
+  const editing = editingReport ? DB.reports.find(x=>x.id===editingReport) : null;
+  const formCurso = editing ? studentCourse(editing.studentId) : defaultCourse();
+
+  main.innerHTML = `
+    <h2>Reportes de estudiantes</h2>
+    <p class="subtitle">${profe
+      ? 'Elige el curso, luego el estudiante, y publica la observación. Cada familia solo verá las de su propio estudiante.'
+      : 'Observaciones que los profesores publicaron sobre ' + esc(myStudents().map(s=>`${s.name} (${s.curso})`).join(', ') || 'tu estudiante') + '.'}</p>
+
+    ${profe ? `
+    <div class="card">
+      <h3>${editing ? 'Editar reporte' : 'Publicar nuevo reporte'}</h3>
+      <div class="grid">
+        <div class="form-row"><label for="repCurso">Curso</label>
+          <select class="curso" id="repCurso">${courseOptions(formCurso)}</select></div>
+        <div class="form-row"><label for="repStudent">Estudiante del curso</label>
+          <select id="repStudent"></select></div>
+        <div class="form-row"><label for="repTitle">Título</label>
+          <input id="repTitle" type="text" placeholder="Ej: Progreso en Química"></div>
+      </div>
+      <div class="form-row"><label for="repBody">Observación</label>
+        <textarea id="repBody" placeholder="Describe lo que la familia necesita saber…"></textarea></div>
+      <div class="row-actions">
+        <button class="btn" id="btnSaveReport">${editing ? 'Guardar cambios' : 'Publicar reporte'}</button>
+        ${editing ? '<button class="btn ghost" id="btnCancelReport">Cancelar</button>' : ''}
+      </div>
+    </div>` : `<div class="locked-banner">🔒 Solo ves los reportes del estudiante vinculado a tu cuenta.</div>`}
+
+    ${profe ? `
+    <div class="card">
+      <div class="grid">
+        <div class="form-row" style="margin:0"><label for="repFCurso">Filtrar por curso</label>
+          <select class="curso" id="repFCurso">${courseOptions('', 'Todos los cursos')}</select></div>
+        <div class="form-row" style="margin:0"><label for="repFStudent">Filtrar por estudiante</label>
+          <select id="repFStudent"><option value="">Todos</option></select></div>
+      </div>
+    </div>` : ''}
+
+    <div class="card" id="reportsList"></div>`;
+
+  if(profe){
+    fillStudents($('repStudent'), formCurso, editing ? editing.studentId : null);
+    linkCourse('repCurso','repStudent');
+    if(editing){
+      $('repTitle').value = editing.title;
+      $('repBody').value = editing.body;
+      $('btnCancelReport').onclick = ()=>{ editingReport = null; renderReportes(main); };
+    }
+    $('btnSaveReport').onclick = saveReport;
+    $('repFCurso').onchange = ()=>{
+      const c = $('repFCurso').value, ss = $('repFStudent');
+      ss.innerHTML = '<option value="">Todos</option>' +
+        (c ? studentsIn(c).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('') : '');
+      drawReports(list);
+    };
+    $('repFStudent').onchange = ()=>drawReports(list);
+  }
+  drawReports(list);
+}
+function drawReports(list){
+  const fc = $('repFCurso') ? $('repFCurso').value : '';
+  const fs = $('repFStudent') ? $('repFStudent').value : '';
+  let rows = list.slice().reverse();
+  if(fc) rows = rows.filter(r=>studentCourse(r.studentId)===fc);
+  if(fs) rows = rows.filter(r=>r.studentId===fs);
+
+  const el = $('reportsList');
+  el.innerHTML = rows.length ? rows.map(r=>`
+    <div class="report-item">
+      <div class="meta">${esc(studentName(r.studentId))} · curso ${esc(studentCourse(r.studentId))} · por ${esc(userName(r.authorId))} · ${esc(r.date)}</div>
+      <h4>${esc(r.title)}</h4>
+      <p>${esc(r.body)}</p>
+      ${isProfe() ? `<div class="row-actions">
+        <button class="btn ghost tiny" data-edit="${r.id}">Editar</button>
+        <button class="btn danger tiny" data-del="${r.id}">Eliminar</button></div>` : ''}
+    </div>`).join('')
+    : '<p class="empty">No hay reportes que coincidan con el filtro.</p>';
+
+  el.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>{
+    editingReport = b.dataset.edit; renderReportes($('main')); $('main').scrollTop = 0;
+  });
+  el.querySelectorAll('[data-del]').forEach(b=>b.onclick = async ()=>{
+    const ok = await confirmDialog('Eliminar reporte','Las familias dejarán de verlo de inmediato.','Eliminar');
+    if(!ok) return;
+    DB.reports = DB.reports.filter(x=>x.id!==b.dataset.del);
+    await save(); toast('Reporte eliminado'); renderReportes($('main'));
+  });
+}
+async function saveReport(){
+  const studentId = $('repStudent').value;
+  const title = $('repTitle').value.trim();
+  const body = $('repBody').value.trim();
+  if(!studentId) return toast('Ese curso no tiene estudiantes. Elige otro curso.', true);
+  if(!title || !body) return toast('El reporte necesita título y observación.', true);
+  if(editingReport){
+    Object.assign(DB.reports.find(x=>x.id===editingReport), {studentId, title, body});
+    editingReport = null; toast('Reporte actualizado');
+  }else{
+    DB.reports.push({id:uid('r'), studentId, title, body, authorId:currentUser.id, date:todayStr()});
+    toast('Reporte publicado');
+  }
+  await save();
+  renderReportes($('main'));
+}
+
+/* =====================================================================
+   ADMINISTRACIÓN · solo profesores
+   ===================================================================== */
+let admCurso = null, admQuery = '';
+function renderAdmin(main){
+  if(!isProfe()) return;
+  if(!admCurso) admCurso = defaultCourse();
+  main.innerHTML = `
+    <h2>Administración</h2>
+    <p class="subtitle">Estudiantes por curso, materias y cuentas de acceso del colegio.</p>
+
+    <div class="stat-strip">
+      <div class="stat"><div class="k">Estudiantes</div><div class="v">${DB.students.length}</div></div>
+      <div class="stat"><div class="k">Cursos</div><div class="v">${COURSES.length}</div></div>
+      <div class="stat"><div class="k">Materias</div><div class="v">${DB.subjects.length}</div></div>
+      <div class="stat"><div class="k">Cuentas</div><div class="v">${DB.users.length}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Matricular estudiante</h3></div>
+      <div class="grid">
+        <div class="form-row"><label for="stName">Nombre completo</label><input id="stName" type="text" placeholder="Ej: Camila Rojas Pineda"></div>
+        <div class="form-row"><label for="stCurso">Curso</label><select class="curso" id="stCurso">${courseOptions(admCurso)}</select></div>
+      </div>
+      <button class="btn" id="btnAddStudent">Agregar al curso</button>
+      <p class="hint">Los cursos van de 101 a 1106: el primer número (o los dos primeros) es el grado y los dos últimos, el curso dentro del grado.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Lista de estudiantes</h3></div>
+      <div class="grid">
+        <div class="form-row" style="margin:0"><label for="admFCurso">Ver curso</label>
+          <select class="curso" id="admFCurso">${courseOptions(admCurso)}</select></div>
+        <div class="form-row" style="margin:0"><label for="admSearch">Buscar por nombre en todo el colegio</label>
+          <input id="admSearch" type="text" placeholder="Ej: Torres" value="${esc(admQuery)}"></div>
+      </div>
+      <div class="table-wrap" style="margin-top:16px">
+        <table><thead><tr><th>Estudiante</th><th>Curso</th><th>Promedio ${esc(TERM_ACTUAL)}</th><th>Reportes</th><th></th></tr></thead>
+        <tbody id="stBody"></tbody></table>
+      </div>
+      <p class="hint" id="stCount"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Materias</h3></div>
+      <div class="grid">
+        <div class="form-row"><label for="subName">Nueva materia</label><input id="subName" type="text" placeholder="Ej: Emprendimiento"></div>
+      </div>
+      <button class="btn" id="btnAddSubject">Agregar materia</button>
+      <div class="table-wrap" style="margin-top:18px">
+        <table><thead><tr><th>Materia</th><th>Abreviatura</th><th></th></tr></thead>
+        <tbody id="subBody"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Cuentas de acceso</h3></div>
+      <div class="grid">
+        <div class="form-row"><label for="uRole">Tipo de cuenta</label>
+          <select id="uRole"><option value="profesor">Profesor</option><option value="familia">Familia</option></select></div>
+        <div class="form-row"><label for="uName">Nombre</label><input id="uName" type="text" placeholder="Nombre completo"></div>
+        <div class="form-row" id="wrapSubject"><label for="uSubject">Materia que dicta</label>
+          <select id="uSubject">${DB.subjects.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
+        <div class="form-row" id="wrapCurso" hidden><label for="uCurso">Curso del estudiante</label>
+          <select class="curso" id="uCurso">${courseOptions(admCurso)}</select></div>
+        <div class="form-row" id="wrapStudent" hidden><label for="uStudent">Estudiante vinculado</label>
+          <select id="uStudent"></select></div>
+      </div>
+      <button class="btn" id="btnAddUser">Crear cuenta y generar código</button>
+      <div class="table-wrap" style="margin-top:18px">
+        <table><thead><tr><th>Código</th><th>Nombre</th><th>Rol</th><th>Vinculado a</th><th></th></tr></thead>
+        <tbody id="uBody"></tbody></table>
+      </div>
+      <p class="hint">Las cuentas nuevas nacen con la contraseña <b class="mono">clave123</b> y la pregunta de seguridad del colegio (respuesta: <b class="mono">cuaderno</b>). Pídele a la persona que la cambie en “Mi cuenta”.</p>
+    </div>`;
+
+  fillStudents($('uStudent'), $('uCurso').value);
+  linkCourse('uCurso','uStudent');
+  $('uRole').onchange = ()=>{
+    const fam = $('uRole').value === 'familia';
+    $('wrapSubject').hidden = fam;
+    $('wrapCurso').hidden = !fam;
+    $('wrapStudent').hidden = !fam;
+  };
+  $('admFCurso').onchange = ()=>{ admCurso = $('admFCurso').value; drawStudents(); };
+  $('admSearch').oninput = ()=>{ admQuery = $('admSearch').value; drawStudents(); };
+  $('btnAddStudent').onclick = addStudent;
+  $('btnAddSubject').onclick = addSubject;
+  $('btnAddUser').onclick = addUser;
+  drawStudents(); drawSubjects(); drawUsers();
+}
+
+function drawStudents(){
+  const q = norm(admQuery);
+  let list, alcance;
+  if(q){
+    list = DB.students.filter(s=>norm(s.name).includes(q))
+      .sort((a,b)=> a.curso === b.curso ? a.name.localeCompare(b.name,'es') : Number(a.curso) - Number(b.curso))
+      .slice(0, 60);
+    alcance = `Búsqueda en todo el colegio · se muestran hasta 60 resultados.`;
+  }else{
+    list = studentsIn(admCurso);
+    alcance = `Curso ${admCurso} · ${list.length} estudiantes.`;
+  }
+  $('stCount').textContent = alcance;
+  $('stBody').innerHTML = list.length ? list.map(s=>{
+    const a = avgOf(s.id, TERM_ACTUAL);
+    return `<tr>
+      <td>${esc(s.name)}</td>
+      <td><span class="curso-chip">${esc(s.curso)}</span></td>
+      <td><span class="prom ${a!==null&&a<3?'bad':''}">${fmt(a)}</span></td>
+      <td>${DB.reports.filter(r=>r.studentId===s.id).length}</td>
+      <td style="white-space:nowrap">
+        <button class="btn ghost tiny" data-rn="${s.id}">Renombrar</button>
+        <button class="btn ghost tiny" data-mv="${s.id}">Cambiar curso</button>
+        <button class="btn danger tiny" data-ds="${s.id}">Eliminar</button></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" class="empty">No hay estudiantes que coincidan.</td></tr>`;
+
+  $('stBody').querySelectorAll('[data-rn]').forEach(b=>b.onclick = async ()=>{
+    const s = studentById(b.dataset.rn);
+    const nuevo = prompt('Nuevo nombre del estudiante:', s.name);
+    if(nuevo === null) return;
+    if(!nuevo.trim()) return toast('El nombre no puede quedar vacío.', true);
+    s.name = nuevo.trim();
+    await save(); toast('Estudiante actualizado'); drawStudents();
+  });
+  $('stBody').querySelectorAll('[data-mv]').forEach(b=>b.onclick = async ()=>{
+    const s = studentById(b.dataset.mv);
+    const nuevo = prompt('Nuevo curso (de 101 a 1106):', s.curso);
+    if(nuevo === null) return;
+    const c = String(nuevo).trim();
+    if(!COURSES.includes(c)) return toast('Ese curso no existe. Van de 101 a 1106.', true);
+    s.curso = c;
+    await save(); toast(`${s.name} pasó al curso ${c}`); renderAdmin($('main'));
+  });
+  $('stBody').querySelectorAll('[data-ds]').forEach(b=>b.onclick = async ()=>{
+    const s = studentById(b.dataset.ds);
+    const ok = await confirmDialog('Eliminar estudiante',
+      `Se borrarán también las notas y reportes de ${s.name}, y las familias vinculadas quedarán sin estudiante.`, 'Eliminar');
+    if(!ok) return;
+    DB.students = DB.students.filter(x=>x.id!==s.id);
+    delete DB.marks[s.id];
+    delete DB.obs[s.id];
+    DB.reports = DB.reports.filter(r=>r.studentId!==s.id);
+    DB.users.forEach(u=>{ u.studentIds = (u.studentIds||[]).filter(id=>id!==s.id); });
+    await save(); toast('Estudiante eliminado'); renderAdmin($('main'));
+  });
+}
+async function addStudent(){
+  const name = $('stName').value.trim();
+  const curso = $('stCurso').value;
+  if(!name) return toast('Escribe el nombre del estudiante.', true);
+  DB.students.push({id:uid('st'), name, curso});
+  admCurso = curso;
+  await save();
+  toast(`${name} matriculado en ${curso}`);
+  renderAdmin($('main'));
+}
+
+function drawSubjects(){
+  $('subBody').innerHTML = DB.subjects.length ? DB.subjects.map(s=>`
+    <tr><td>${esc(s)}</td><td class="mono">${esc(abbr(s))}</td>
+    <td><button class="btn danger tiny" data-dsub="${esc(s)}">Quitar</button></td></tr>`).join('')
+    : '<tr><td colspan="3" class="empty">No hay materias registradas.</td></tr>';
+
+  $('subBody').querySelectorAll('[data-dsub]').forEach(b=>b.onclick = async ()=>{
+    const s = b.dataset.dsub;
+    const ok = await confirmDialog('Quitar materia',
+      `${s} desaparecerá de todas las planillas y boletines. Las notas ya registradas de esa materia dejan de mostrarse.`, 'Quitar');
+    if(!ok) return;
+    DB.subjects = DB.subjects.filter(x=>x!==s);
+    await save(); toast('Materia quitada'); renderAdmin($('main'));
+  });
+}
+async function addSubject(){
+  const name = $('subName').value.trim();
+  if(!name) return toast('Escribe el nombre de la materia.', true);
+  if(DB.subjects.some(s=>norm(s)===norm(name))) return toast('Esa materia ya existe.', true);
+  DB.subjects.push(name);
+  await save(); toast('Materia agregada'); renderAdmin($('main'));
+}
+
+function drawUsers(){
+  $('uBody').innerHTML = DB.users.map(u=>{
+    const vinculo = u.role==='profesor'
+      ? esc(u.subject||'—')
+      : esc((u.studentIds||[]).map(id=>`${studentName(id)} · ${studentCourse(id)}`).join(', ') || 'Sin estudiante');
+    return `<tr>
+      <td class="code-cell">${esc(u.code)}</td>
+      <td>${esc(u.name)}${u.id===currentUser.id?' <span class="tag">tú</span>':''}</td>
+      <td><span class="tag ${u.role}">${u.role==='profesor'?'Profesor':'Familia'}</span></td>
+      <td>${vinculo}</td>
+      <td style="white-space:nowrap">
+        <button class="btn ghost tiny" data-rp="${u.id}">Restablecer contraseña</button>
+        ${u.id!==currentUser.id?`<button class="btn danger tiny" data-du="${u.id}">Eliminar</button>`:''}
+      </td></tr>`;
+  }).join('');
+
+  $('uBody').querySelectorAll('[data-rp]').forEach(b=>b.onclick = async ()=>{
+    const u = userById(b.dataset.rp);
+    const ok = await confirmDialog('Restablecer contraseña',
+      `Se generará una contraseña temporal para ${u.name}. La actual dejará de servir.`, 'Restablecer');
+    if(!ok) return;
+    const tmp = tempPassword();
+    u.passHash = await hashText(tmp);
+    await save();
+    await confirmDialog('Contraseña temporal', `Entrega esta contraseña a ${u.name}:\n\n${tmp}\n\nDebe cambiarla desde “Mi cuenta”.`, 'Entendido', true);
+    renderAdmin($('main'));
+  });
+  $('uBody').querySelectorAll('[data-du]').forEach(b=>b.onclick = async ()=>{
+    const u = userById(b.dataset.du);
+    const ok = await confirmDialog('Eliminar cuenta', `${u.name} perderá el acceso al portal. Sus mensajes se borrarán.`, 'Eliminar');
+    if(!ok) return;
+    DB.users = DB.users.filter(x=>x.id!==u.id);
+    DB.messages = DB.messages.filter(m=>m.from!==u.id && m.to!==u.id);
+    await save(); toast('Cuenta eliminada'); renderAdmin($('main'));
+  });
+}
+async function addUser(){
+  const role = $('uRole').value;
+  const name = $('uName').value.trim();
+  if(!name) return toast('Escribe el nombre de la persona.', true);
+  let studentIds = [];
+  if(role === 'familia'){
+    const sid = $('uStudent').value;
+    if(!sid) return toast('Ese curso no tiene estudiantes. Elige otro curso.', true);
+    studentIds = [sid];
+  }
+  const code = makeCode(role);
+  DB.users.push({
+    id: uid('u'), code, name, role,
+    subject: role === 'profesor' ? $('uSubject').value : '',
+    studentIds,
+    passHash: await hashText(DEMO_PASS),
+    recQ: RECOVERY_Q,
+    recHash: await hashText(DEMO_ANSWER),
+  });
+  await save();
+  renderAdmin($('main'));
+  await confirmDialog('Cuenta creada', `Código de acceso de ${name}:\n\n${code}\n\nContraseña inicial: ${DEMO_PASS}`, 'Entendido', true);
+}
+
+/* =====================================================================
+   MI CUENTA
+   ===================================================================== */
+function renderCuenta(main){
+  const vinculo = isProfe()
+    ? `Profesor(a) de ${esc(currentUser.subject || '—')}`
+    : esc(myStudents().map(s=>`${s.name} · curso ${s.curso}`).join(', ') || 'Sin estudiante vinculado');
+
+  main.innerHTML = `
+    <h2>Mi cuenta</h2>
+    <p class="subtitle">Tu código de acceso y tus datos de seguridad.</p>
+
+    <div class="card">
+      <h3>Datos de acceso</h3>
+      <div class="table-wrap"><table>
+        <tr><td style="width:180px;color:var(--text-soft)">Nombre</td><td>${esc(currentUser.name)}</td></tr>
+        <tr><td style="color:var(--text-soft)">Código</td><td class="code-cell">${esc(currentUser.code)}</td></tr>
+        <tr><td style="color:var(--text-soft)">Rol</td><td><span class="tag ${currentUser.role}">${isProfe()?'Profesor':'Familia'}</span></td></tr>
+        <tr><td style="color:var(--text-soft)">Vínculo</td><td>${vinculo}</td></tr>
+      </table></div>
+    </div>
+
+    <div class="card">
+      <h3>Cambiar contraseña</h3>
+      <div class="grid">
+        <div class="form-row"><label for="cpOld">Contraseña actual</label><input id="cpOld" type="password" autocomplete="current-password"></div>
+        <div class="form-row"><label for="cpNew">Nueva contraseña</label><input id="cpNew" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password"></div>
+        <div class="form-row"><label for="cpNew2">Repite la nueva</label><input id="cpNew2" type="password" autocomplete="new-password"></div>
+      </div>
+      <button class="btn" id="btnChangePass">Cambiar contraseña</button>
+    </div>
+
+    <div class="card">
+      <h3>Pregunta de seguridad</h3>
+      <p class="subtitle" style="margin-bottom:16px">Con esta pregunta puedes recuperar tu acceso si olvidas la contraseña.</p>
+      <div class="form-row"><label for="sqQ">Pregunta</label>
+        <input id="sqQ" type="text" value="${esc(currentUser.recQ||'')}" placeholder="Ej: ¿Cómo se llamaba mi primera mascota?"></div>
+      <div class="form-row"><label for="sqA">Respuesta</label>
+        <input id="sqA" type="text" placeholder="Escribe la respuesta (se guarda cifrada)"></div>
+      <button class="btn" id="btnSaveQ">Guardar pregunta</button>
+    </div>`;
+
+  $('btnChangePass').onclick = async ()=>{
+    const oldp = $('cpOld').value, p1 = $('cpNew').value, p2 = $('cpNew2').value;
+    if(await hashText(oldp) !== currentUser.passHash) return toast('La contraseña actual no es correcta.', true);
+    if(p1.length < 6) return toast('La nueva contraseña necesita al menos 6 caracteres.', true);
+    if(p1 !== p2) return toast('Las dos contraseñas nuevas no son iguales.', true);
+    currentUser.passHash = await hashText(p1);
+    await save(); toast('Contraseña cambiada'); renderCuenta(main);
+  };
+  $('btnSaveQ').onclick = async ()=>{
+    const q = $('sqQ').value.trim(), a = $('sqA').value.trim();
+    if(!q || !a) return toast('Escribe la pregunta y la respuesta.', true);
+    currentUser.recQ = q;
+    currentUser.recHash = await hashText(norm(a));
+    await save(); toast('Pregunta de seguridad guardada'); renderCuenta(main);
+  };
+}
+</script>
+</body>
+</html>
