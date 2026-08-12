@@ -296,32 +296,69 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
 /* =====================================================================
-   ALMACENAMIENTO
+   ALMACENAMIENTO · Firestore
+   Todo el portal vive en un solo documento compartido: portal/db
    ===================================================================== */
-const KEY = 'cuaderno:db:v4';
-const memStore = {};
-const hasStore = typeof window !== 'undefined' && !!window.storage;
-let storageOk = hasStore;
+
+/* ⬇️⬇️⬇️  PEGA AQUÍ TU CONFIGURACIÓN DE FIREBASE  ⬇️⬇️⬇️
+   La copias tal cual desde la consola de Firebase.
+   Reemplaza este bloque completo, desde la llave { hasta la llave }.   */
+const firebaseConfig = {
+  apiKey: "AIzaSyB3iwsrQj2GCi1QlAPRdfYo6hW5-Tgdm_s",
+  authDomain: "ie-send.firebaseapp.com",
+  projectId: "ie-send",
+  storageBucket: "ie-send.firebasestorage.app",
+  messagingSenderId: "68179987058",
+  appId: "1:68179987058:web:0afc98e4322684b4b4d0eb"
+};
+/* ⬆️⬆️⬆️  FIN DE LA CONFIGURACIÓN  ⬆️⬆️⬆️ */
+
+const nube = getFirestore(initializeApp(firebaseConfig));
+const DOC_PORTAL = doc(nube, 'portal', 'db');
+let storageOk = true;
 
 async function storeGet(){
-  if(hasStore){
-    try{ const r = await window.storage.get(KEY); return r && r.value ? JSON.parse(r.value) : null; }
-    catch(e){ return null; }
+  try{
+    const snap = await getDoc(DOC_PORTAL);
+    return snap.exists() ? JSON.parse(snap.data().json) : null;
+  }catch(e){
+    storageOk = false;
+    console.error('No se pudo leer de Firestore:', e);
+    return null;
   }
-  return memStore[KEY] ? JSON.parse(memStore[KEY]) : null;
 }
 async function storeSet(data){
-  const raw = JSON.stringify(data);
-  memStore[KEY] = raw;
-  if(hasStore){
-    try{ await window.storage.set(KEY, raw); storageOk = true; }catch(e){ storageOk = false; }
+  try{
+    await setDoc(DOC_PORTAL, { json: JSON.stringify(data) });
+    storageOk = true;
+  }catch(e){
+    storageOk = false;
+    console.error('No se pudo guardar en Firestore:', e);
   }
 }
 async function storeClear(){
-  memStore[KEY] = null;
-  if(hasStore){ try{ await window.storage.delete(KEY); }catch(e){} }
+  try{ await deleteDoc(DOC_PORTAL); }catch(e){ console.error(e); }
+}
+
+/* Escucha permanente: cuando otro dispositivo guarda algo, llega aquí solo.
+   Sirve sobre todo para el chat en vivo. */
+function escucharCambios(){
+  onSnapshot(DOC_PORTAL, snap => {
+    if(!snap.exists()) return;
+    if(snap.metadata.hasPendingWrites) return;   // es mi propio cambio, ya lo dibujé
+    try{
+      DB = JSON.parse(snap.data().json);
+    }catch(e){ return; }
+    if(!currentUser) return;
+    // Si estoy en el chat, repinto la conversación sin borrar lo que estoy escribiendo
+    if(activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
+  }, err => console.error('Se perdió la conexión con Firestore:', err));
 }
 
 /* ---------- Utilidades ---------- */
@@ -603,6 +640,7 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
   $('boot').hidden = true;
   $('viewLogin').hidden = false;
   renderDemoTable();
+  escucharCambios();
 })();
 
 function renderDemoTable(){
@@ -739,7 +777,7 @@ function enterApp(){
   $('tabList').querySelectorAll('.tab-btn').forEach(b=>{ b.onclick = ()=>showTab(b.dataset.tab); });
 
   showTab(isProfe() ? 'cursos' : 'notas');
-  if(!storageOk) toast('Sin almacenamiento: los cambios durarán solo esta sesión.', true);
+  if(!storageOk) toast('Sin conexión con la base de datos: revisa la configuración de Firebase.', true);
 }
 function showTab(tab){
   const allowed = (isProfe() ? TABS_PROFESOR : TABS_FAMILIA).some(t=>t.id===tab);
@@ -811,8 +849,12 @@ async function sendMessage(){
   const input = $('msgInput');
   const text = input.value.trim();
   if(!text || !activeContact) return;
-  DB.messages.push({id:uid('m'), from:currentUser.id, to:activeContact, text, time:nowStamp()});
   input.value = '';
+  // Traigo la versión más reciente para no borrar un mensaje que otro acabe de enviar
+  const fresco = await storeGet();
+  if(fresco) DB = fresco;
+  DB.messages = DB.messages || [];
+  DB.messages.push({id:uid('m'), from:currentUser.id, to:activeContact, text, time:nowStamp()});
   await save();
   renderThread();
 }
