@@ -73,6 +73,7 @@
   .role-pill{display:inline-block; margin-top:8px; font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; padding:3px 9px; border-radius:20px; font-weight:700;}
   .role-pill.profesor{background:var(--amber); color:var(--ink);}
   .role-pill.familia{background:var(--pen); color:#fff;}
+  .role-pill.coordinador{background:var(--ink); color:var(--paper);}
   .tab-btn{display:flex; align-items:center; gap:11px; padding:12px 22px; color:#C9D4CF; font-size:14px; font-weight:500; border:none; background:none; text-align:left; width:100%; border-left:3px solid transparent; transition:background .12s ease;}
   .tab-btn:hover{background:rgba(255,255,255,0.06); color:#fff;}
   .tab-btn.active{background:var(--paper-dark); color:var(--ink); border-left-color:var(--amber); font-weight:600; border-radius:0 20px 20px 0; margin-right:10px;}
@@ -181,6 +182,7 @@
   .tag{display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:3px 8px; border-radius:20px; background:var(--paper-dark); color:var(--text-soft);}
   .tag.profesor{background:var(--amber); color:var(--ink);}
   .tag.familia{background:var(--pen); color:#fff;}
+  .tag.coordinador{background:var(--ink); color:var(--paper);}
   .curso-chip{display:inline-block; font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px; padding:3px 9px; border-radius:6px; background:var(--ink); color:var(--paper); letter-spacing:.04em;}
   .code-cell{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12.5px; color:var(--ink);}
 
@@ -243,9 +245,9 @@
         <button class="link-btn" id="btnReset" style="color:var(--text-soft)">Restablecer datos de demo</button>
       </div>
       <details class="demo-box">
-        <summary>Ver cuentas de prueba</summary>
+        <summary>Cuenta inicial de coordinación</summary>
         <table id="demoTable"></table>
-        <p class="gate-note" style="text-align:left">Palabra de recuperación de todas las cuentas de prueba: <b class="mono">cuaderno</b></p>
+        <p class="gate-note" style="text-align:left">Con esta cuenta se crea todo lo demás. <b>Cambia su contraseña apenas entres.</b> Palabra de recuperación: <b class="mono">cuaderno</b></p>
       </details>
     </div>
   </div>
@@ -449,7 +451,7 @@ async function hashText(text){
   return 'fb' + Math.abs(h).toString(36);
 }
 function makeCode(role){
-  const prefix = role === 'profesor' ? 'DOC' : 'FAM';
+  const prefix = role === 'coordinador' ? 'COO' : role === 'profesor' ? 'DOC' : 'FAM';
   let code;
   do{ code = prefix + '-' + Math.floor(1000 + Math.random()*8999); }
   while(DB && DB.users.some(u=>u.code===code));
@@ -605,37 +607,29 @@ function generarNotas(students, rand, term){
    DATOS SEMILLA
    ===================================================================== */
 const DEMO_PASS = 'clave123';
+const COORD_CODE = 'COO-1001';
+const COORD_PASS = 'coordinacion';
 const DEMO_ANSWER = 'cuaderno';
 const RECOVERY_Q = '¿Cuál es la palabra clave que te dio el colegio?';
 const TERMS = ['T1','T2','T3'];
 const TERM_ACTUAL = 'T2';
 
 async function seedDB(){
-  const ph = await hashText(DEMO_PASS);
+  const ph = await hashText(COORD_PASS);
   const ah = await hashText(DEMO_ANSWER);
-  const rand = rng(20260806);
-  const students = generarNomina(rand);
   return {
     subjects: SUBJECTS.slice(),
     terms: TERMS.slice(),
-    students,
-    marks: generarNotas(students, rand, TERM_ACTUAL),
+    students: [],
+    marks: {},
     obs: {},
-    users:[
-      {id:'u_maria',  code:'DOC-4471', name:'María Gómez',     role:'profesor', subject:'Matemáticas', passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:[]},
-      {id:'u_carlos', code:'DOC-8820', name:'Carlos Ruiz',     role:'profesor', subject:'Sociales',    passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:[]},
-      {id:'u_lucia',  code:'DOC-3096', name:'Lucía Fernández', role:'profesor', subject:'Química',     passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:[]},
-      {id:'u_ana',    code:'FAM-1057', name:'Ana Pérez',       role:'familia',  subject:'',            passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:['st_juan']},
-      {id:'u_diego',  code:'FAM-6314', name:'Diego Torres',    role:'familia',  subject:'',            passHash:ph, recQ:RECOVERY_Q, recHash:ah, studentIds:['st_sofia']},
+    acudientes: [],
+    users: [
+      { id:'u_coord', code:COORD_CODE, name:'Coordinación académica', role:'coordinador',
+        subject:'', studentIds:[], passHash:ph, recQ:RECOVERY_Q, recHash:ah }
     ],
-    messages:[
-      {id:uid('m'), from:'u_maria',  to:'u_carlos', text:'¿Viste el informe de conducta de 602?', time:'09:12'},
-      {id:uid('m'), from:'u_carlos', to:'u_maria',  text:'Sí, lo reviso hoy en la reunión de las 3.', time:'09:15'},
-    ],
-    reports:[
-      {id:uid('r'), studentId:'st_juan',  authorId:'u_maria',  title:'Progreso en Matemáticas', body:'Juan mejoró notablemente en fracciones. Recomiendo reforzar problemas con decimales en casa.', date:'10 jul'},
-      {id:uid('r'), studentId:'st_sofia', authorId:'u_carlos', title:'Participación en clase',  body:'Sofía participa activamente en los debates de Sociales. Buen manejo de fuentes.', date:'08 jul'},
-    ],
+    messages: [],
+    reports: [],
   };
 }
 
@@ -654,7 +648,11 @@ const studentById = id => DB.students.find(s=>s.id===id);
 const studentName = id => (studentById(id)||{}).name || 'Estudiante eliminado';
 const studentCourse = id => (studentById(id)||{}).curso || '—';
 const userName = id => (userById(id)||{}).name || 'Usuario eliminado';
-const isProfe = () => currentUser && currentUser.role === 'profesor';
+const isProfe   = () => currentUser && currentUser.role === 'profesor';
+const isCoord   = () => currentUser && currentUser.role === 'coordinador';
+const isStaff   = () => isProfe() || isCoord();          // profesor o coordinador
+const isFamilia = () => currentUser && currentUser.role === 'familia';
+const nombreRol = r => r === 'coordinador' ? 'Coordinación' : r === 'profesor' ? 'Profesor' : 'Familia';
 const myStudents = () => (currentUser.studentIds||[]).map(studentById).filter(Boolean);
 
 function markOf(sid, term, subject){
@@ -717,10 +715,11 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
 })();
 
 function renderDemoTable(){
-  $('demoTable').innerHTML = DB.users.slice(0,5).map(u=>`
-    <tr><td>${esc(u.code)}</td><td>${esc(u.name)}</td>
-    <td>${u.role==='profesor' ? 'Profesor' : 'Familia'}</td>
-    <td class="mono">${esc(DEMO_PASS)}</td></tr>`).join('');
+  const coord = DB.users.find(u=>u.role==='coordinador');
+  $('demoTable').innerHTML = coord
+    ? `<tr><td>${esc(coord.code)}</td><td>${esc(coord.name)}</td>
+       <td>Coordinación</td><td class="mono">${esc(COORD_PASS)}</td></tr>`
+    : '<tr><td colspan="4">No hay cuenta de coordinación.</td></tr>';
 }
 
 /* =====================================================================
@@ -877,6 +876,11 @@ const TABS_PROFESOR = [
   {id:'cursos',     ico:'▦', label:'Cursos'},
   {id:'notas',      ico:'✎', label:'Notas'},
   {id:'reportes',   ico:'📋', label:'Reportes'},
+  {id:'cuenta',     ico:'🔑', label:'Mi cuenta'},
+];
+const TABS_COORD = [
+  {id:'mensajeria', ico:'✉', label:'Mensajería'},
+  {id:'reportes',   ico:'📋', label:'Reportes'},
   {id:'admin',      ico:'⚙', label:'Administración'},
   {id:'cuenta',     ico:'🔑', label:'Mi cuenta'},
 ];
@@ -887,13 +891,16 @@ const TABS_FAMILIA = [
   {id:'cuenta',   ico:'🔑', label:'Mi cuenta'},
 ];
 
+function misTabs(){
+  return isCoord() ? TABS_COORD : isProfe() ? TABS_PROFESOR : TABS_FAMILIA;
+}
 function enterApp(){
   $('viewLogin').hidden = true; $('viewForgot').hidden = true;
   $('app').classList.add('active');
   $('sbName').textContent = currentUser.name;
   $('sbCode').textContent = currentUser.code;
   const pill = $('sbRole');
-  pill.textContent = isProfe() ? 'Profesor' : 'Familia';
+  pill.textContent = nombreRol(currentUser.role);
   pill.className = 'role-pill ' + currentUser.role;
 
   const spine = $('spine');
@@ -903,16 +910,16 @@ function enterApp(){
     s.style.top = (20 + i*32) + 'px';
     spine.appendChild(s);
   }
-  const tabs = isProfe() ? TABS_PROFESOR : TABS_FAMILIA;
+  const tabs = misTabs();
   $('tabList').innerHTML = tabs.map(t=>`
     <button class="tab-btn" data-tab="${t.id}"><span class="ico">${t.ico}</span> ${t.label}</button>`).join('');
   $('tabList').querySelectorAll('.tab-btn').forEach(b=>{ b.onclick = ()=>showTab(b.dataset.tab); });
 
-  showTab(isProfe() ? 'cursos' : 'notas');
+  showTab(isCoord() ? 'admin' : isProfe() ? 'cursos' : 'notas');
   if(!storageOk) toast('Sin conexión con la base de datos: revisa la configuración de Firebase.', true);
 }
 function showTab(tab){
-  const allowed = (isProfe() ? TABS_PROFESOR : TABS_FAMILIA).some(t=>t.id===tab);
+  const allowed = misTabs().some(t=>t.id===tab);
   if(!allowed) return;                       // control de permisos por rol
   activeTab = tab;
   $('tabList').querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
@@ -968,9 +975,9 @@ function pintarAvisos(){
 
 function renderMensajeria(main){
   // Profesor: habla con colegas y con familias. Familia: solo con profesores.
-  const colegas = isProfe()
-    ? DB.users.filter(u=>u.id!==currentUser.id)
-    : DB.users.filter(u=>u.role==='profesor');
+  const colegas = isFamilia()
+    ? DB.users.filter(u=>u.role==='profesor')
+    : DB.users.filter(u=>u.id!==currentUser.id);
   if(!colegas.length){
     main.innerHTML = `<h2>Mensajería</h2>
       <div class="card"><p class="empty">Todavía no hay nadie con quien conversar.</p></div>`;
@@ -980,9 +987,9 @@ function renderMensajeria(main){
 
   main.innerHTML = `
     <h2>Mensajería</h2>
-    <p class="subtitle">${isProfe()
-      ? 'Conversaciones con colegas y con las familias de tus estudiantes.'
-      : 'Escribe a los profesores dentro de su horario de atención.'}</p>
+    <p class="subtitle">${isFamilia()
+      ? 'Escribe a los profesores dentro de su horario de atención.'
+      : 'Conversaciones con el equipo del colegio y con las familias.'}</p>
     <div class="card msg-layout">
       <div class="contacts" id="contacts"></div>
       <div class="thread">
@@ -1002,7 +1009,7 @@ function renderMensajeria(main){
       <div class="nm">${esc(c.name)}<span class="dot"></span></div>
       <div class="subj">${last
         ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'')
-        : esc(c.role==='profesor' ? (c.subject||'Profesor') : 'Familia')}</div>
+        : esc(c.role==='profesor' ? (c.subject||'Profesor') : nombreRol(c.role))}</div>
     </button>`;
   }).join('');
   $('contacts').querySelectorAll('.contact').forEach(b=>{
@@ -1010,7 +1017,7 @@ function renderMensajeria(main){
   });
   const c = userById(activeContact);
   $('threadHead').textContent = c
-    ? `${c.name} · ${c.role==='profesor' ? (c.subject||'Profesor') : 'Familia'}`
+    ? `${c.name} · ${c.role==='profesor' ? (c.subject||'Profesor') : nombreRol(c.role)}`
     : '';
   $('btnSend').onclick = sendMessage;
   $('msgInput').onkeydown = e => { if(e.key==='Enter') sendMessage(); };
@@ -1024,12 +1031,12 @@ function actualizarComposer(){
   const input = $('msgInput'), boton = $('btnSend'), aviso = $('avisoHorario');
   if(!input || !boton) return;
   const otro = userById(activeContact);
-  const abierto = isProfe() || enHorario(otro);   // el profesor escribe siempre
+  const abierto = !isFamilia() || enHorario(otro);   // el colegio escribe siempre
   input.disabled = !abierto;
   boton.disabled = !abierto;
   input.placeholder = abierto ? 'Escribe un mensaje…' : 'Fuera del horario de atención';
   if(aviso){
-    aviso.hidden = isProfe();
+    aviso.hidden = !isFamilia();
     aviso.className = 'aviso-horario' + (abierto ? ' abierto' : '');
     aviso.textContent = otro ? textoHorario(otro) : '';
   }
@@ -1050,7 +1057,7 @@ async function sendMessage(){
   const text = input.value.trim();
   if(!text || !activeContact) return;
   const otro = userById(activeContact);
-  if(!isProfe() && !enHorario(otro)){
+  if(isFamilia() && !enHorario(otro)){
     return toast('Fuera del horario de atención. ' + textoHorario(otro), true);
   }
   input.value = '';
@@ -1145,6 +1152,7 @@ function drawCursoPanel(){
 let notaCurso = null, notaStudent = null, notaTerm = TERM_ACTUAL;
 
 function renderNotas(main){
+  if(isCoord()) return;                    // coordinación no ve notas
   return isProfe() ? renderNotasProfe(main) : renderNotasFamilia(main);
 }
 
@@ -1316,7 +1324,7 @@ function renderNotasFamilia(main){
    ===================================================================== */
 let editingReport = null;
 function renderReportes(main){
-  const profe = isProfe();
+  const profe = isStaff();                 // coordinación y profesores publican
   const mine = profe ? null : (currentUser.studentIds || []);
   const list = profe ? DB.reports : DB.reports.filter(r=>mine.includes(r.studentId));
   const editing = editingReport ? DB.reports.find(x=>x.id===editingReport) : null;
@@ -1391,7 +1399,7 @@ function drawReports(list){
       <div class="meta">${esc(studentName(r.studentId))} · curso ${esc(studentCourse(r.studentId))} · por ${esc(userName(r.authorId))} · ${esc(r.date)}</div>
       <h4>${esc(r.title)}</h4>
       <p>${esc(r.body)}</p>
-      ${isProfe() ? `<div class="row-actions">
+      ${isStaff() ? `<div class="row-actions">
         <button class="btn ghost tiny" data-edit="${r.id}">Editar</button>
         <button class="btn danger tiny" data-del="${r.id}">Eliminar</button></div>` : ''}
     </div>`).join('')
@@ -1429,7 +1437,7 @@ async function saveReport(){
    ===================================================================== */
 let admCurso = null, admQuery = '', acQuery = '', uQuery = '';
 function renderAdmin(main){
-  if(!isProfe()) return;
+  if(!isCoord()) return;
   if(!admCurso) admCurso = defaultCourse();
   main.innerHTML = `
     <h2>Administración</h2>
@@ -1501,7 +1509,7 @@ function renderAdmin(main){
       <div class="card-head"><h3>Cuentas de acceso</h3></div>
       <div class="grid">
         <div class="form-row"><label for="uRole">Tipo de cuenta</label>
-          <select id="uRole"><option value="profesor">Profesor</option><option value="familia">Familia</option></select></div>
+          <select id="uRole"><option value="profesor">Profesor</option><option value="coordinador">Coordinación</option></select></div>
         <div class="form-row"><label for="uName">Nombre</label><input id="uName" type="text" placeholder="Nombre completo"></div>
         <div class="form-row" id="wrapSubject"><label for="uSubject">Materia que dicta</label>
           <select id="uSubject">${DB.subjects.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
@@ -1515,9 +1523,9 @@ function renderAdmin(main){
       <div class="form-row" style="margin-top:22px"><label for="uQuery">Buscar cuenta</label>
         <input id="uQuery" type="text" placeholder="Nombre, código o estudiante" value="${esc(uQuery)}"></div>
 
-      <h4 class="sub-head">Profesores <span id="uCountP"></span></h4>
+      <h4 class="sub-head">Coordinación y profesores <span id="uCountP"></span></h4>
       <div class="table-wrap">
-        <table><thead><tr><th>Código</th><th>Nombre</th><th>Materia</th><th></th></tr></thead>
+        <table><thead><tr><th>Código</th><th>Nombre</th><th>Materia / rol</th><th></th></tr></thead>
         <tbody id="uBodyP"></tbody></table>
       </div>
 
@@ -1540,6 +1548,7 @@ function renderAdmin(main){
   linkCourse('uCurso','uStudent');
   $('uRole').onchange = ()=>{
     const fam = $('uRole').value === 'familia';
+    $('wrapSubject').hidden = $('uRole').value !== 'profesor';
     $('wrapSubject').hidden = fam;
     $('wrapCurso').hidden = !fam;
     $('wrapStudent').hidden = !fam;
@@ -1717,15 +1726,15 @@ function drawUsers(){
   const fila = u => `<tr>
       <td class="code-cell">${esc(u.code)}</td>
       <td>${esc(u.name)}${u.id===currentUser.id?' <span class="tag">tú</span>':''}</td>
-      <td>${u.role==='profesor'
-        ? esc(u.subject||'—')
+      <td>${u.role==='coordinador' ? 'Coordinación'
+        : u.role==='profesor' ? esc(u.subject||'—')
         : esc((u.studentIds||[]).map(id=>`${studentName(id)} · ${studentCourse(id)}`).join(', ') || 'Sin estudiante')}</td>
       <td style="white-space:nowrap">
         <button class="btn ghost tiny" data-rp="${u.id}">Restablecer contraseña</button>
         ${u.id!==currentUser.id?`<button class="btn danger tiny" data-du="${u.id}">Eliminar</button>`:''}
       </td></tr>`;
 
-  const profes = DB.users.filter(u=>u.role==='profesor' && coincide(u));
+  const profes = DB.users.filter(u=>u.role!=='familia' && coincide(u));
   const familias = DB.users.filter(u=>u.role==='familia' && coincide(u));
   const vacio = '<tr><td colspan="4" class="empty">Sin resultados.</td></tr>';
 
@@ -1784,9 +1793,11 @@ async function addUser(){
    MI CUENTA
    ===================================================================== */
 function renderCuenta(main){
-  const vinculo = isProfe()
-    ? `Profesor(a) de ${esc(currentUser.subject || '—')}`
-    : esc(myStudents().map(s=>`${s.name} · curso ${s.curso}`).join(', ') || 'Sin estudiante vinculado');
+  const vinculo = isCoord()
+    ? 'Acceso a administración y reportes. No ve las notas.'
+    : isProfe()
+      ? `Profesor(a) de ${esc(currentUser.subject || '—')}`
+      : esc(myStudents().map(s=>`${s.name} · curso ${s.curso}`).join(', ') || 'Sin estudiante vinculado');
 
   main.innerHTML = `
     <h2>Mi cuenta</h2>
@@ -1797,7 +1808,7 @@ function renderCuenta(main){
       <div class="table-wrap"><table>
         <tr><td style="width:180px;color:var(--text-soft)">Nombre</td><td>${esc(currentUser.name)}</td></tr>
         <tr><td style="color:var(--text-soft)">Código</td><td class="code-cell">${esc(currentUser.code)}</td></tr>
-        <tr><td style="color:var(--text-soft)">Rol</td><td><span class="tag ${currentUser.role}">${isProfe()?'Profesor':'Familia'}</span></td></tr>
+        <tr><td style="color:var(--text-soft)">Rol</td><td><span class="tag ${currentUser.role}">${nombreRol(currentUser.role)}</span></td></tr>
         <tr><td style="color:var(--text-soft)">Vínculo</td><td>${vinculo}</td></tr>
       </table></div>
     </div>
