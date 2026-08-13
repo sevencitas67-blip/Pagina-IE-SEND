@@ -113,6 +113,9 @@
   .contact.active{background:var(--ink); color:var(--paper);}
   .contact .nm{font-weight:600;}
   .contact .subj{font-size:11px; opacity:.7; margin-top:2px;}
+  .contact .dot{display:none; width:9px; height:9px; border-radius:50%; background:#c0392b; margin-left:7px; vertical-align:middle;}
+  .contact.nuevo .dot{display:inline-block;}
+  .contact.nuevo .nm{font-weight:800;}
   .thread{flex:1; display:flex; flex-direction:column; min-width:0;}
   .thread-head{font-size:13px; color:var(--text-soft); padding-bottom:10px; border-bottom:1px solid var(--line); margin-bottom:10px;}
   .thread-msgs{flex:1; overflow-y:auto; padding:6px 4px; display:flex; flex-direction:column; gap:10px;}
@@ -817,6 +820,26 @@ function showTab(tab){
 /* =====================================================================
    MENSAJERÍA · solo profesores
    ===================================================================== */
+  function keyLeidos(){ return 'cuaderno:leidos:' + currentUser.id; }
+function getLeidos(){
+  try{ return JSON.parse(localStorage.getItem(keyLeidos())) || {}; }catch(e){ return {}; }
+}
+function marcarLeido(contactId){
+  const ords = DB.messages.filter(m=>m.from===contactId && m.to===currentUser.id).map(m=>m.orden||0);
+  const l = getLeidos();
+  l[contactId] = ords.length ? Math.max(...ords) : 0;
+  try{ localStorage.setItem(keyLeidos(), JSON.stringify(l)); }catch(e){}
+}
+function noLeidos(contactId){
+  const desde = getLeidos()[contactId] || 0;
+  return DB.messages.filter(m=>m.from===contactId && m.to===currentUser.id && (m.orden||0) > desde).length;
+}
+function pintarAvisos(){
+  if(!$('contacts')) return;
+  $('contacts').querySelectorAll('.contact').forEach(b=>{
+    b.classList.toggle('nuevo', b.dataset.id !== activeContact && noLeidos(b.dataset.id) > 0);
+  });
+}
 function renderMensajeria(main){
   if(!isProfe()) return;
   const colegas = DB.users.filter(u=>u.role==='profesor' && u.id!==currentUser.id);
@@ -846,7 +869,7 @@ function renderMensajeria(main){
   $('contacts').innerHTML = colegas.map(c=>{
     const last = DB.messages.filter(m=>(m.from===currentUser.id&&m.to===c.id)||(m.from===c.id&&m.to===currentUser.id)).slice(-1)[0];
     return `<button class="contact ${c.id===activeContact?'active':''}" data-id="${c.id}">
-      <div class="nm">${esc(c.name)}</div>
+      <div class="nm">${esc(c.name)}<span class="dot"></span></div>
       <div class="subj">${last ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'') : esc(c.subject||'Profesor')}</div>
     </button>`;
   }).join('');
@@ -868,6 +891,8 @@ function renderThread(){
     <div class="bubble ${m.from===currentUser.id?'me':'them'}">${esc(m.text)}<time>${esc(m.time)}</time></div>`).join('')
     : '<p class="empty">Aún no hay mensajes en esta conversación. Escribe el primero.</p>';
   box.scrollTop = box.scrollHeight;
+  marcarLeido(activeContact);
+  pintarAvisos();
 }
 async function sendMessage(){
   const input = $('msgInput');
