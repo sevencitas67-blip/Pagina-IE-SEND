@@ -116,6 +116,12 @@
   .contact .dot{display:none; width:9px; height:9px; border-radius:50%; background:#c0392b; margin-left:7px; vertical-align:middle;}
   .contact.nuevo .dot{display:inline-block;}
   .contact.nuevo .nm{font-weight:800;}
+  .aviso-horario{font-size:11.5px; padding:7px 12px; border-radius:7px; margin-bottom:8px;
+    background:#f6e7e4; color:#8c2f22; border:1px solid #e6cdc8;}
+  .aviso-horario.abierto{background:#e6f0e8; color:#25603a; border-color:#c9e0d1;}
+  .horario-dias{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+  .horario-dias label{display:flex; align-items:center; gap:5px; font-size:13px;
+    padding:6px 10px; border:1px solid var(--line); border-radius:7px; cursor:pointer;}
   .thread{flex:1; display:flex; flex-direction:column; min-width:0;}
   .thread-head{font-size:13px; color:var(--text-soft); padding-bottom:10px; border-bottom:1px solid var(--line); margin-bottom:10px;}
   .thread-msgs{flex:1; overflow-y:auto; padding:6px 4px; display:flex; flex-direction:column; gap:10px;}
@@ -666,6 +672,7 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
   $('boot').hidden = true;
   $('viewLogin').hidden = false;
   renderDemoTable();
+  setInterval(()=>{ if(currentUser && activeTab==='mensajeria') actualizarComposer(); }, 30000);
   escucharCambios();
   escucharMensajes();
 })();
@@ -777,6 +784,7 @@ const TABS_PROFESOR = [
   {id:'cuenta',     ico:'🔑', label:'Mi cuenta'},
 ];
 const TABS_FAMILIA = [
+  {id:'mensajeria', ico:'✉', label:'Mensajería'},
   {id:'notas',    ico:'✎', label:'Notas'},
   {id:'reportes', ico:'📋', label:'Reportes'},
   {id:'cuenta',   ico:'🔑', label:'Mi cuenta'},
@@ -820,7 +828,27 @@ function showTab(tab){
 /* =====================================================================
    MENSAJERÍA · solo profesores
    ===================================================================== */
-  function keyLeidos(){ return 'cuaderno:leidos:' + currentUser.id; }
+/* ---------- Horarios de atención ---------- */
+const DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const aMinutos = t => { const [h,m] = String(t||'').split(':').map(Number); return (h||0)*60 + (m||0); };
+
+function enHorario(profe, cuando = new Date()){
+  const h = profe && profe.horario;
+  if(!h || !Array.isArray(h.dias) || !h.dias.length || !h.desde || !h.hasta) return false;
+  if(!h.dias.includes(cuando.getDay())) return false;
+  const ahora = cuando.getHours()*60 + cuando.getMinutes();
+  return ahora >= aMinutos(h.desde) && ahora <= aMinutos(h.hasta);
+}
+function textoHorario(profe){
+  const h = profe && profe.horario;
+  if(!h || !Array.isArray(h.dias) || !h.dias.length || !h.desde || !h.hasta)
+    return 'Todavía no ha publicado su horario de atención.';
+  const dias = h.dias.slice().sort((a,b)=>a-b).map(i=>DIAS[i]).join(', ');
+  return `Atiende ${dias} de ${h.desde} a ${h.hasta}.`;
+}
+
+/* Avisos de mensajes nuevos (se guarda en este dispositivo) */
+function keyLeidos(){ return 'cuaderno:leidos:' + currentUser.id; }
 function getLeidos(){
   try{ return JSON.parse(localStorage.getItem(keyLeidos())) || {}; }catch(e){ return {}; }
 }
@@ -840,25 +868,30 @@ function pintarAvisos(){
     b.classList.toggle('nuevo', b.dataset.id !== activeContact && noLeidos(b.dataset.id) > 0);
   });
 }
+
 function renderMensajeria(main){
-  if(!isProfe()) return;
-  const colegas = DB.users.filter(u=>u.role==='profesor' && u.id!==currentUser.id);
+  // Profesor: habla con colegas y con familias. Familia: solo con profesores.
+  const colegas = isProfe()
+    ? DB.users.filter(u=>u.id!==currentUser.id)
+    : DB.users.filter(u=>u.role==='profesor');
   if(!colegas.length){
     main.innerHTML = `<h2>Mensajería</h2>
-      <p class="subtitle">Conversaciones privadas entre el cuerpo docente.</p>
-      <div class="card"><p class="empty">Todavía no hay otros profesores registrados. Agrega uno desde Administración.</p></div>`;
+      <div class="card"><p class="empty">Todavía no hay nadie con quien conversar.</p></div>`;
     return;
   }
   if(!activeContact || !colegas.some(c=>c.id===activeContact)) activeContact = colegas[0].id;
 
   main.innerHTML = `
-    <h2>Mensajería entre profesores</h2>
-    <p class="subtitle">Privado para el cuerpo docente. Las familias no tienen acceso a esta sección.</p>
+    <h2>Mensajería</h2>
+    <p class="subtitle">${isProfe()
+      ? 'Conversaciones con colegas y con las familias de tus estudiantes.'
+      : 'Escribe a los profesores dentro de su horario de atención.'}</p>
     <div class="card msg-layout">
       <div class="contacts" id="contacts"></div>
       <div class="thread">
         <div class="thread-head" id="threadHead"></div>
         <div class="thread-msgs" id="threadMsgs"></div>
+        <div class="aviso-horario" id="avisoHorario" hidden></div>
         <div class="composer">
           <input id="msgInput" type="text" placeholder="Escribe un mensaje…" autocomplete="off">
           <button id="btnSend">Enviar</button>
@@ -870,18 +903,39 @@ function renderMensajeria(main){
     const last = DB.messages.filter(m=>(m.from===currentUser.id&&m.to===c.id)||(m.from===c.id&&m.to===currentUser.id)).slice(-1)[0];
     return `<button class="contact ${c.id===activeContact?'active':''}" data-id="${c.id}">
       <div class="nm">${esc(c.name)}<span class="dot"></span></div>
-      <div class="subj">${last ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'') : esc(c.subject||'Profesor')}</div>
+      <div class="subj">${last
+        ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'')
+        : esc(c.role==='profesor' ? (c.subject||'Profesor') : 'Familia')}</div>
     </button>`;
   }).join('');
   $('contacts').querySelectorAll('.contact').forEach(b=>{
     b.onclick = ()=>{ activeContact = b.dataset.id; renderMensajeria(main); };
   });
   const c = userById(activeContact);
-  $('threadHead').textContent = c ? `${c.name} · ${c.subject || 'Profesor'}` : '';
+  $('threadHead').textContent = c
+    ? `${c.name} · ${c.role==='profesor' ? (c.subject||'Profesor') : 'Familia'}`
+    : '';
   $('btnSend').onclick = sendMessage;
   $('msgInput').onkeydown = e => { if(e.key==='Enter') sendMessage(); };
   renderThread();
-  $('msgInput').focus();
+  actualizarComposer();
+  if($('msgInput') && !$('msgInput').disabled) $('msgInput').focus();
+}
+
+/* Abre o cierra la caja de escribir según el horario del profesor */
+function actualizarComposer(){
+  const input = $('msgInput'), boton = $('btnSend'), aviso = $('avisoHorario');
+  if(!input || !boton) return;
+  const otro = userById(activeContact);
+  const abierto = isProfe() || enHorario(otro);   // el profesor escribe siempre
+  input.disabled = !abierto;
+  boton.disabled = !abierto;
+  input.placeholder = abierto ? 'Escribe un mensaje…' : 'Fuera del horario de atención';
+  if(aviso){
+    aviso.hidden = isProfe();
+    aviso.className = 'aviso-horario' + (abierto ? ' abierto' : '');
+    aviso.textContent = otro ? textoHorario(otro) : '';
+  }
 }
 function renderThread(){
   const box = $('threadMsgs');
@@ -898,6 +952,10 @@ async function sendMessage(){
   const input = $('msgInput');
   const text = input.value.trim();
   if(!text || !activeContact) return;
+  const otro = userById(activeContact);
+  if(!isProfe() && !enHorario(otro)){
+    return toast('Fuera del horario de atención. ' + textoHorario(otro), true);
+  }
   input.value = '';
   // No esperamos nada: Firestore lo pinta al instante y lo sincroniza en segundo plano
   addDoc(COL_MSG, {
@@ -1534,6 +1592,23 @@ function renderCuenta(main){
       </table></div>
     </div>
 
+    ${isProfe() ? `
+    <div class="card">
+      <h3>Horario de atención a familias</h3>
+      <p class="subtitle" style="margin-bottom:16px">Las familias solo podrán escribirte dentro de estos días y horas.</p>
+      <div class="horario-dias">
+        ${DIAS.map((d,i)=>`<label><input type="checkbox" class="hDia" value="${i}"
+          ${(currentUser.horario && (currentUser.horario.dias||[]).includes(i)) ? 'checked' : ''}> ${d}</label>`).join('')}
+      </div>
+      <div class="grid">
+        <div class="form-row"><label for="hDesde">Desde</label>
+          <input id="hDesde" type="time" value="${esc((currentUser.horario&&currentUser.horario.desde)||'07:00')}"></div>
+        <div class="form-row"><label for="hHasta">Hasta</label>
+          <input id="hHasta" type="time" value="${esc((currentUser.horario&&currentUser.horario.hasta)||'12:00')}"></div>
+      </div>
+      <button class="btn" id="btnSaveHorario">Guardar horario</button>
+    </div>` : ''}
+
     <div class="card">
       <h3>Cambiar contraseña</h3>
       <div class="grid">
@@ -1553,6 +1628,21 @@ function renderCuenta(main){
         <input id="sqA" type="text" placeholder="Escribe la respuesta (se guarda cifrada)"></div>
       <button class="btn" id="btnSaveQ">Guardar pregunta</button>
     </div>`;
+
+  if($('btnSaveHorario')){
+    $('btnSaveHorario').onclick = async ()=>{
+      const dias = [...document.querySelectorAll('.hDia:checked')].map(i=>Number(i.value));
+      const desde = $('hDesde').value, hasta = $('hHasta').value;
+      if(!dias.length) return toast('Marca al menos un día.', true);
+      if(!desde || !hasta) return toast('Completa las dos horas.', true);
+      if(aMinutos(hasta) <= aMinutos(desde)) return toast('La hora final debe ser mayor que la inicial.', true);
+      const yo = DB.users.find(u=>u.id===currentUser.id);
+      yo.horario = { dias, desde, hasta };
+      currentUser.horario = yo.horario;
+      await save();
+      toast('Horario guardado');
+    };
+  }
 
   $('btnChangePass').onclick = async ()=>{
     const oldp = $('cpOld').value, p1 = $('cpNew').value, p2 = $('cpNew2').value;
