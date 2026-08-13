@@ -236,6 +236,7 @@
       <button class="btn-primary" id="btnLogin">Entrar al portal</button>
       <div class="gate-foot">
         <button class="link-btn" id="btnGoForgot">¿Olvidaste tu contraseña?</button>
+        <button class="link-btn" id="btnGoRegistro">Registrarme como acudiente</button>
         <button class="link-btn" id="btnReset" style="color:var(--text-soft)">Restablecer datos de demo</button>
       </div>
       <details class="demo-box">
@@ -243,6 +244,38 @@
         <table id="demoTable"></table>
         <p class="gate-note" style="text-align:left">Palabra de recuperación de todas las cuentas de prueba: <b class="mono">cuaderno</b></p>
       </details>
+    </div>
+  </div>
+</div>
+
+<!-- ============ REGISTRO DE ACUDIENTE ============ -->
+<div class="gate" id="viewRegistro" hidden>
+  <div class="id-card">
+    <div class="id-card__top">
+      <div class="id-card__badge">+</div>
+      <div><h1>Registro de acudiente</h1><p>Solo para cédulas autorizadas por el colegio</p></div>
+    </div>
+    <div class="id-card__body">
+      <div class="alert" id="regAlert" hidden></div>
+      <div id="regStep1">
+        <label class="field-label" for="regCedula">Número de cédula</label>
+        <input class="txt code" id="regCedula" type="text" inputmode="numeric" placeholder="1000123456">
+        <button class="btn-primary" id="btnRegNext">Continuar</button>
+        <p class="gate-note">Tu cédula debe haber sido registrada por un profesor en la reunión de padres.</p>
+      </div>
+      <div id="regStep2" hidden>
+        <div class="locked-banner" style="margin-bottom:16px"><span id="regQuien"></span></div>
+        <label class="field-label" for="regPass">Crea tu contraseña</label>
+        <input class="txt" id="regPass" type="password" placeholder="Mínimo 6 caracteres">
+        <label class="field-label" for="regPass2">Repite la contraseña</label>
+        <input class="txt" id="regPass2" type="password" placeholder="Repite la contraseña">
+        <button class="btn-primary" id="btnRegSave">Crear mi cuenta</button>
+      </div>
+      <div id="regStep3" hidden>
+        <div class="locked-banner" style="margin-bottom:16px">Tu cuenta quedó creada. Guarda este código, lo necesitas para entrar:</div>
+        <p class="mono" id="regCodigo" style="font-size:26px; text-align:center; letter-spacing:2px; margin:18px 0"></p>
+      </div>
+      <div class="gate-foot"><button class="link-btn" id="btnRegVolver">Volver a iniciar sesión</button></div>
     </div>
   </div>
 </div>
@@ -668,6 +701,7 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
   DB.marks = DB.marks || {};
   DB.obs = DB.obs || {};
   DB.messages = DB.messages || [];
+  DB.acudientes = DB.acudientes || [];
   DB.students.forEach(s=>{ if(!s.curso) s.curso = '101'; });
   $('boot').hidden = true;
   $('viewLogin').hidden = false;
@@ -694,7 +728,7 @@ function showAlert(el, msg, ok){
   box.hidden = !msg;
 }
 function gate(view){
-  ['viewLogin','viewForgot'].forEach(v => $(v).hidden = v !== view);
+  ['viewLogin','viewForgot','viewRegistro'].forEach(v => $(v).hidden = v !== view);
   $('app').classList.remove('active');
 }
 $('btnLogin').onclick = doLogin;
@@ -710,11 +744,65 @@ async function doLogin(){
   if(!user || user.passHash !== ph){
     return showAlert('loginAlert','El código o la contraseña no coinciden. Revísalos e inténtalo otra vez.');
   }
+  const ac = DB.acudientes.find(a=>a.userId === user.id);
+  if(ac && ac.activo === false){
+    return showAlert('loginAlert','Esta cuenta está bloqueada. Comunícate con el colegio.');
+  }
   showAlert('loginAlert','');
   $('loginPass').value = '';
   currentUser = user;
   enterApp();
 }
+/* ---------- Registro de acudiente ---------- */
+const soloDigitos = t => String(t||'').replace(/\D/g,'');
+let regAcudiente = null;
+
+$('btnGoRegistro').onclick = ()=>{
+  showAlert('regAlert','');
+  $('regStep1').hidden = false; $('regStep2').hidden = true; $('regStep3').hidden = true;
+  $('regCedula').value=''; $('regPass').value=''; $('regPass2').value='';
+  regAcudiente = null;
+  gate('viewRegistro');
+};
+$('btnRegVolver').onclick = ()=>{ showAlert('loginAlert',''); gate('viewLogin'); };
+$('regCedula').onkeydown = e => { if(e.key==='Enter') $('btnRegNext').click(); };
+
+$('btnRegNext').onclick = ()=>{
+  const ced = soloDigitos($('regCedula').value);
+  if(!ced) return showAlert('regAlert','Escribe tu número de cédula.');
+  const ac = DB.acudientes.find(a=>a.cedula === ced);
+  if(!ac) return showAlert('regAlert','Esa cédula no está autorizada. Comunícate con el colegio.');
+  if(ac.activo === false) return showAlert('regAlert','Esta cédula está bloqueada. Comunícate con el colegio.');
+  if(ac.userId && DB.users.some(u=>u.id===ac.userId))
+    return showAlert('regAlert','Esta cédula ya tiene una cuenta. Usa "¿Olvidaste tu contraseña?" si no la recuerdas.');
+  regAcudiente = ac;
+  const hijos = (ac.studentIds||[]).map(studentById).filter(Boolean)
+    .map(s=>`${s.name} (curso ${s.curso})`).join(', ');
+  $('regQuien').textContent = `${ac.nombre} · acudiente de ${hijos || 'estudiante sin asignar'}`;
+  showAlert('regAlert','');
+  $('regStep1').hidden = true; $('regStep2').hidden = false;
+  $('regPass').focus();
+};
+
+$('btnRegSave').onclick = async ()=>{
+  if(!regAcudiente) return;
+  const p1 = $('regPass').value, p2 = $('regPass2').value;
+  if(p1.length < 6) return showAlert('regAlert','La contraseña debe tener al menos 6 caracteres.');
+  if(p1 !== p2) return showAlert('regAlert','Las dos contraseñas no coinciden.');
+  const code = makeCode('familia');
+  const nuevo = {
+    id: uid('u'), code, name: regAcudiente.nombre, role: 'familia',
+    subject: '', studentIds: (regAcudiente.studentIds||[]).slice(),
+    passHash: await hashText(p1), recQ: '', recHash: ''
+  };
+  DB.users.push(nuevo);
+  regAcudiente.userId = nuevo.id;
+  await save();
+  showAlert('regAlert','');
+  $('regCodigo').textContent = code;
+  $('regStep2').hidden = true; $('regStep3').hidden = false;
+};
+
 $('btnGoForgot').onclick = ()=>{
   showAlert('forgotAlert','');
   $('forgotStep1').hidden = false; $('forgotStep2').hidden = true;
@@ -1330,7 +1418,7 @@ async function saveReport(){
 /* =====================================================================
    ADMINISTRACIÓN · solo profesores
    ===================================================================== */
-let admCurso = null, admQuery = '';
+let admCurso = null, admQuery = '', acQuery = '';
 function renderAdmin(main){
   if(!isProfe()) return;
   if(!admCurso) admCurso = defaultCourse();
@@ -1383,6 +1471,25 @@ function renderAdmin(main){
     </div>
 
     <div class="card">
+      <div class="card-head"><h3>Acudientes autorizados</h3></div>
+      <p class="subtitle" style="margin-bottom:16px">Registra aquí la cédula y el nombre que tomaste en la reunión de padres. Solo estas personas podrán crear su cuenta.</p>
+      <div class="grid">
+        <div class="form-row"><label for="acCedula">Cédula</label><input id="acCedula" type="text" inputmode="numeric" placeholder="1000123456"></div>
+        <div class="form-row"><label for="acNombre">Nombre del acudiente</label><input id="acNombre" type="text" placeholder="Ej: Marta Lucía Peña"></div>
+        <div class="form-row"><label for="acCurso">Curso</label><select class="curso" id="acCurso">${courseOptions(admCurso)}</select></div>
+        <div class="form-row"><label for="acStudent">Estudiante</label><select id="acStudent"></select></div>
+      </div>
+      <button class="btn" id="btnAddAcudiente">Autorizar acudiente</button>
+      <p class="hint">Si el acudiente tiene más de un hijo, regístralo otra vez con la misma cédula y el otro estudiante: se suman a la misma cuenta.</p>
+      <div class="form-row" style="margin-top:18px"><label for="acQuery">Buscar</label>
+        <input id="acQuery" type="text" placeholder="Cédula o nombre" value="${esc(acQuery)}"></div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Cédula</th><th>Acudiente</th><th>Estudiante(s)</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="acBody"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h3>Cuentas de acceso</h3></div>
       <div class="grid">
         <div class="form-row"><label for="uRole">Tipo de cuenta</label>
@@ -1402,6 +1509,12 @@ function renderAdmin(main){
       </div>
       <p class="hint">Las cuentas nuevas nacen con la contraseña <b class="mono">clave123</b> y la pregunta de seguridad del colegio (respuesta: <b class="mono">cuaderno</b>). Pídele a la persona que la cambie en “Mi cuenta”.</p>
     </div>`;
+
+  fillStudents($('acStudent'), $('acCurso').value);
+  linkCourse('acCurso','acStudent');
+  drawAcudientes();
+  $('acQuery').oninput = ()=>{ acQuery = $('acQuery').value; drawAcudientes(); };
+  $('btnAddAcudiente').onclick = addAcudiente;
 
   fillStudents($('uStudent'), $('uCurso').value);
   linkCourse('uCurso','uStudent');
@@ -1508,6 +1621,71 @@ async function addSubject(){
   if(DB.subjects.some(s=>norm(s)===norm(name))) return toast('Esa materia ya existe.', true);
   DB.subjects.push(name);
   await save(); toast('Materia agregada'); renderAdmin($('main'));
+}
+
+function nombresDe(ids){
+  return (ids||[]).map(studentById).filter(Boolean).map(s=>`${s.name} (${s.curso})`).join(', ') || '—';
+}
+async function addAcudiente(){
+  const cedula = String($('acCedula').value||'').replace(/\D/g,'');
+  const nombre = $('acNombre').value.trim();
+  const sid = $('acStudent').value;
+  if(!cedula) return toast('Escribe el número de cédula.', true);
+  if(!nombre) return toast('Escribe el nombre del acudiente.', true);
+  if(!sid) return toast('Ese curso no tiene estudiantes. Elige otro curso.', true);
+  const ya = DB.acudientes.find(a=>a.cedula===cedula);
+  if(ya){
+    ya.studentIds = ya.studentIds || [];
+    if(ya.studentIds.includes(sid)) return toast('Ese acudiente ya está vinculado a ese estudiante.', true);
+    ya.studentIds.push(sid);
+    const cuenta = DB.users.find(u=>u.id===ya.userId);
+    if(cuenta) cuenta.studentIds = ya.studentIds.slice();
+    await save(); drawAcudientes();
+    return toast('Estudiante agregado a un acudiente existente');
+  }
+  DB.acudientes.push({ cedula, nombre, studentIds:[sid], activo:true, userId:null });
+  $('acCedula').value=''; $('acNombre').value='';
+  await save(); drawAcudientes();
+  toast('Acudiente autorizado. Ya puede registrarse con su cédula.');
+}
+function drawAcudientes(){
+  const q = norm(acQuery);
+  const lista = DB.acudientes.filter(a=>!q || a.cedula.includes(q) || norm(a.nombre).includes(q));
+  $('acBody').innerHTML = lista.length ? lista.map(a=>{
+    const cuenta = DB.users.find(u=>u.id===a.userId);
+    const estado = a.activo === false ? '<span class="tag">Bloqueado</span>'
+      : cuenta ? `<span class="tag familia">Registrado · ${esc(cuenta.code)}</span>`
+      : '<span class="tag">Pendiente</span>';
+    return `<tr>
+      <td class="code-cell">${esc(a.cedula)}</td>
+      <td>${esc(a.nombre)}</td>
+      <td>${esc(nombresDe(a.studentIds))}</td>
+      <td>${estado}</td>
+      <td style="white-space:nowrap">
+        <button class="btn ghost tiny" data-acb="${esc(a.cedula)}">${a.activo===false?'Activar':'Bloquear'}</button>
+        <button class="btn danger tiny" data-acr="${esc(a.cedula)}">Retirar</button>
+      </td></tr>`;
+  }).join('') : '<tr><td colspan="5" class="empty">Todavía no hay acudientes autorizados.</td></tr>';
+
+  $('acBody').querySelectorAll('[data-acb]').forEach(b=>b.onclick = async ()=>{
+    const a = DB.acudientes.find(x=>x.cedula===b.dataset.acb);
+    if(!a) return;
+    a.activo = a.activo === false;
+    await save(); drawAcudientes();
+    toast(a.activo ? 'Acudiente activado' : 'Acudiente bloqueado: ya no puede entrar');
+  });
+  $('acBody').querySelectorAll('[data-acr]').forEach(b=>b.onclick = async ()=>{
+    const a = DB.acudientes.find(x=>x.cedula===b.dataset.acr);
+    if(!a) return;
+    if(!confirm(`¿Retirar a ${a.nombre}?\n\nSe borra la cédula de la lista, su cuenta, su contraseña y sus mensajes. Esto no se puede deshacer.`)) return;
+    if(a.userId){
+      await borrarMensajesDe(a.userId);
+      DB.users = DB.users.filter(u=>u.id!==a.userId);
+    }
+    DB.acudientes = DB.acudientes.filter(x=>x.cedula!==a.cedula);
+    await save(); renderAdmin($('main'));
+    toast('Acudiente retirado del sistema');
+  });
 }
 
 function drawUsers(){
