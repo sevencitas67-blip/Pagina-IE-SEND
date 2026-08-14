@@ -120,6 +120,7 @@
   .sub-head{font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-soft);
     margin:22px 0 8px; font-weight:700;}
   .sub-head span{font-weight:400; text-transform:none; letter-spacing:0;}
+  .zona-riesgo{border-color:#e6cdc8; background:#fdf7f6;}
   .aviso-horario{font-size:11.5px; padding:7px 12px; border-radius:7px; margin-bottom:8px;
     background:#f6e7e4; color:#8c2f22; border:1px solid #e6cdc8;}
   .aviso-horario.abierto{background:#e6f0e8; color:#25603a; border-color:#c9e0d1;}
@@ -242,12 +243,11 @@
       <div class="gate-foot">
         <button class="link-btn" id="btnGoForgot">¿Olvidaste tu contraseña?</button>
         <button class="link-btn" id="btnGoRegistro">Registrarme como acudiente</button>
-        <button class="link-btn" id="btnReset" style="color:var(--text-soft)">Restablecer datos de demo</button>
       </div>
-      <details class="demo-box">
-        <summary>Cuenta inicial de coordinación</summary>
+      <details class="demo-box" id="boxPrimerUso" hidden>
+        <summary>Primer uso del portal</summary>
         <table id="demoTable"></table>
-        <p class="gate-note" style="text-align:left">Con esta cuenta se crea todo lo demás. <b>Cambia su contraseña apenas entres.</b> Palabra de recuperación: <b class="mono">cuaderno</b></p>
+        <p class="gate-note" style="text-align:left">Esta caja desaparece para siempre en cuanto coordinación cambie su contraseña.</p>
       </details>
     </div>
   </div>
@@ -626,7 +626,7 @@ async function seedDB(){
     acudientes: [],
     users: [
       { id:'u_coord', code:COORD_CODE, name:'Coordinación académica', role:'coordinador',
-        subject:'', studentIds:[], passHash:ph, recQ:RECOVERY_Q, recHash:ah }
+        subject:'', studentIds:[], passHash:ph, recQ:RECOVERY_Q, recHash:ah, bootstrap:true }
     ],
     messages: [],
     reports: [],
@@ -715,11 +715,12 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
 })();
 
 function renderDemoTable(){
-  const coord = DB.users.find(u=>u.role==='coordinador');
-  $('demoTable').innerHTML = coord
-    ? `<tr><td>${esc(coord.code)}</td><td>${esc(coord.name)}</td>
-       <td>Coordinación</td><td class="mono">${esc(COORD_PASS)}</td></tr>`
-    : '<tr><td colspan="4">No hay cuenta de coordinación.</td></tr>';
+  const coord = DB.users.find(u=>u.role==='coordinador' && u.bootstrap);
+  const caja = $('boxPrimerUso');
+  caja.hidden = !coord;                       // sin cuenta estrenable, ni se muestra
+  if(!coord) return;
+  $('demoTable').innerHTML = `<tr><td>${esc(coord.code)}</td><td>${esc(coord.name)}</td>
+    <td>Coordinación</td><td class="mono">${esc(COORD_PASS)}</td></tr>`;
 }
 
 /* =====================================================================
@@ -847,19 +848,21 @@ $('btnFgSave').onclick = async ()=>{
   showAlert('loginAlert','Contraseña actualizada. Ya puedes entrar con la nueva.', true);
   fgUser = null;
 };
-$('btnReset').onclick = async ()=>{
-  const ok = await confirmDialog('Restablecer datos de demo',
-    'Se borra todo lo que hayas creado (estudiantes, cuentas, notas, reportes y mensajes) y vuelven los datos de ejemplo. No se puede deshacer.',
-    'Sí, restablecer');
+async function reiniciarPortal(){
+  if(!isCoord()) return;
+  const ok = await confirmDialog('Borrar el portal completo',
+    'Se borran estudiantes, notas, reportes, mensajes, acudientes y TODAS las cuentas, incluida la tuya. No se puede deshacer.',
+    'Continuar');
   if(!ok) return;
-  toast('Generando el colegio…');
+  const escrito = prompt('Para confirmar, escribe exactamente:  BORRAR TODO');
+  if(escrito !== 'BORRAR TODO') return toast('Cancelado: el texto no coincide.', true);
+  toast('Borrando…');
   await storeClear();
   DB = await seedDB();
   await save();
-  renderDemoTable();
-  $('loginCode').value=''; $('loginPass').value='';
-  showAlert('loginAlert','Datos de demo restablecidos.', true);
-};
+  currentUser = null;
+  location.reload();
+}
 $('btnLogout').onclick = ()=>{
   currentUser = null; activeTab = null; activeContact = null;
   $('app').classList.remove('active');
@@ -1487,6 +1490,12 @@ function renderAdmin(main){
       </div>
     </div>
 
+    <div class="card zona-riesgo">
+      <div class="card-head"><h3>Zona de riesgo</h3></div>
+      <p class="subtitle" style="margin-bottom:14px">Borra el portal entero y deja solo la cuenta inicial de coordinación. Pide confirmación escrita.</p>
+      <button class="btn danger" id="btnWipe">Borrar todos los datos</button>
+    </div>
+
     <div class="card">
       <div class="card-head"><h3>Acudientes autorizados</h3></div>
       <p class="subtitle" style="margin-bottom:16px">Anota la cédula que tomaste en la reunión y el estudiante que le corresponde. El nombre lo escribe el acudiente al registrarse y aparece solo en esta tabla.</p>
@@ -1543,6 +1552,7 @@ function renderAdmin(main){
   $('acQuery').oninput = ()=>{ acQuery = $('acQuery').value; drawAcudientes(); };
   $('uQuery').oninput = ()=>{ uQuery = $('uQuery').value; drawUsers(); };
   $('btnAddAcudiente').onclick = addAcudiente;
+  $('btnWipe').onclick = reiniciarPortal;
 
   fillStudents($('uStudent'), $('uCurso').value);
   linkCourse('uCurso','uStudent');
@@ -1871,6 +1881,9 @@ function renderCuenta(main){
     if(p1.length < 6) return toast('La nueva contraseña necesita al menos 6 caracteres.', true);
     if(p1 !== p2) return toast('Las dos contraseñas nuevas no son iguales.', true);
     currentUser.passHash = await hashText(p1);
+    const yo2 = DB.users.find(u=>u.id===currentUser.id);
+    if(yo2){ yo2.passHash = currentUser.passHash; delete yo2.bootstrap; }
+    delete currentUser.bootstrap;
     await save(); toast('Contraseña cambiada'); renderCuenta(main);
   };
   $('btnSaveQ').onclick = async ()=>{
