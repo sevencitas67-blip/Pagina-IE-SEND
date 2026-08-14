@@ -374,41 +374,169 @@ const authAlta = getAuth(appAlta);
 /* El código de acceso se convierte en un correo interno. El usuario nunca lo ve. */
 const emailDe = code => String(code||'').trim().toLowerCase().replace(/\s+/g,'') + '@ie-send.local';
 async function crearCuentaAuth(code, pass){
-  await createUserWithEmailAndPassword(authAlta, emailDe(code), pass);
+  const cred = await createUserWithEmailAndPassword(authAlta, emailDe(code), pass);
+  const nuevoUid = cred.user.uid;
   await signOut(authAlta);
+  return nuevoUid;                   // el usuario del portal usa este mismo id
 }
-const DOC_PORTAL = doc(nube, 'portal', 'db');
-const COL_MSG = collection(nube, 'mensajes');   // los mensajes van aparte: son pequeños y rápidos
-let storageOk = true;
+/* =====================================================================
+   Los datos ya no viven en un solo bloque. Cada cosa tiene su colección,
+   y las reglas del servidor deciden quién puede tocar cada una:
 
-async function storeGet(){
-  try{
-    const snap = await getDoc(DOC_PORTAL);
-    return snap.exists() ? JSON.parse(snap.data().json) : null;
-  }catch(e){
-    storageOk = false;
-    console.error('No se pudo leer de Firestore:', e);
-    return null;
+     usuarios/{uid}        cuenta de cada persona (rol, hijos)
+     directorio/{uid}      perfil visible de cada profesor (materia, horario)
+     colegio/config        materias y periodos
+     colegio/estudiantes   nómina completa · solo el colegio
+     notas/{idEstudiante}  notas y observaciones de UN estudiante
+     reportes/{id}         un reporte, con el estudiante al que pertenece
+     acudientes/{cedula}   cédulas autorizadas · solo coordinación
+     mensajes/{id}         un mensaje, con remitente y destinatario
+   ===================================================================== */
+const COL_USUARIOS   = collection(nube, 'usuarios');
+const COL_DIRECTORIO = collection(nube, 'directorio');
+const COL_NOTAS      = collection(nube, 'notas');
+const COL_REPORTES   = collection(nube, 'reportes');
+const COL_ACUDIENTES = collection(nube, 'acudientes');
+const COL_MSG        = collection(nube, 'mensajes');
+const DOC_CONFIG     = doc(nube, 'colegio', 'config');
+const DOC_NOMINA     = doc(nube, 'colegio', 'estudiantes');
+
+let storageOk = true;
+let espejo = {};                       // última versión conocida del servidor
+const copia = v => JSON.parse(JSON.stringify(v ?? null));
+const igual = (a,b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/* ---------- CARGA · cada rol recibe solo lo suyo ---------- */
+async function cargarTodo(uid){
+  const miDoc = await getDoc(doc(COL_USUARIOS, uid));
+  if(!miDoc.exists()) return null;
+  const yo = { id: uid, ...miDoc.data() };
+
+  const cfg = await getDoc(DOC_CONFIG);
+  const config = cfg.exists() ? cfg.data() : {};
+  const dir = await getDocs(COL_DIRECTORIO);
+  const directorio = dir.docs.map(d => ({ id:d.id, role:'profesor', ...d.data() }));
+
+  const base = {
+    subjects: (config.subjects && config.subjects.length) ? config.subjects : SUBJECTS.slice(),
+    terms: config.terms || TERMS.slice(),
+    students: [], marks: {}, obs: {}, users: [], acudientes: [], reports: [], messages: []
+  };
+
+  if(yo.role === 'familia'){
+    base.students = yo.hijos || [];
+    base.users = [ yo, ...directorio.filter(d => d.id !== uid) ];
+    for(const h of base.students){
+      const n = await getDoc(doc(COL_NOTAS, h.id));
+      if(n.exists()){ base.marks[h.id] = n.data().marks || {}; base.obs[h.id] = n.data().obs || {}; }
+    }
+    const ids = base.students.map(h => h.id).slice(0, 10);
+    if(ids.length){
+      const r = await getDocs(query(COL_REPORTES, where('studentId','in', ids)));
+      base.reports = r.docs.map(d => ({ id:d.id, ...d.data() }));
+    }
+  }else{
+    const nom = await getDoc(DOC_NOMINA);
+    base.students = nom.exists() ? (nom.data().students || []) : [];
+    const us = await getDocs(COL_USUARIOS);
+    base.users = us.docs.map(d => ({ id:d.id, ...d.data() }));
+    base.users.forEach(u => {
+      const perfil = directorio.find(x => x.id === u.id);
+      if(perfil) u.horario = perfil.horario;
+    });
+    const r = await getDocs(COL_REPORTES);
+    base.reports = r.docs.map(d => ({ id:d.id, ...d.data() }));
+
+    if(yo.role === 'profesor'){
+      const n = await getDocs(COL_NOTAS);
+      n.docs.forEach(d => { base.marks[d.id] = d.data().marks || {}; base.obs[d.id] = d.data().obs || {}; });
+    }
+    if(yo.role === 'coordinador'){
+      const a = await getDocs(COL_ACUDIENTES);
+      base.acudientes = a.docs.map(d => ({ cedula:d.id, ...d.data() }));
+    }
   }
+  base.students.forEach(x => { if(!x.curso) x.curso = '101'; });
+  guardarEspejo(base);
+  return { yo, base };
 }
-async function storeSet(data){
+
+function guardarEspejo(d){
+  espejo = {
+    config: { subjects: d.subjects, terms: d.terms },
+    students: copia(d.students), users: copia(d.users),
+    acudientes: copia(d.acudientes), reports: copia(d.reports),
+    marks: copia(d.marks), obs: copia(d.obs),
+  };
+}
+
+/* ---------- GUARDADO ----------
+   Escribe solo lo que cambió, y solo lo que el rol tiene permitido tocar. */
+async function save(){
+  if(!DB || !currentUser) return;
+  const tareas = [];
+
+  if(isCoord()){
+    if(!igual(espejo.config, {subjects:DB.subjects, terms:DB.terms}))
+      tareas.push(setDoc(DOC_CONFIG, {subjects:DB.subjects, terms:DB.terms}));
+    if(!igual(espejo.students, DB.students))
+      tareas.push(setDoc(DOC_NOMINA, {students: DB.students}));
+
+    for(const u of DB.users){
+      const antes = (espejo.users||[]).find(x => x.id === u.id);
+      const { id, horario, ...datos } = u;
+      const limpio = a => a ? JSON.stringify({...a, id:undefined, horario:undefined}) : null;
+      if(limpio(antes) !== limpio(u)) tareas.push(setDoc(doc(COL_USUARIOS, u.id), datos, { merge:true }));
+    }
+    for(const a of (espejo.users||[]))
+      if(!DB.users.some(u => u.id === a.id)) tareas.push(deleteDoc(doc(COL_USUARIOS, a.id)));
+
+    for(const ac of DB.acudientes){
+      const antes = (espejo.acudientes||[]).find(x => x.cedula === ac.cedula);
+      if(!igual(antes, ac)){
+        const { cedula, ...datos } = ac;
+        tareas.push(setDoc(doc(COL_ACUDIENTES, cedula), datos));
+      }
+    }
+    for(const a of (espejo.acudientes||[]))
+      if(!DB.acudientes.some(x => x.cedula === a.cedula)) tareas.push(deleteDoc(doc(COL_ACUDIENTES, a.cedula)));
+  }
+
+  if(isProfe()){
+    for(const sid of Object.keys(DB.marks)){
+      if(!igual((espejo.marks||{})[sid], DB.marks[sid]) || !igual((espejo.obs||{})[sid], DB.obs[sid]))
+        tareas.push(setDoc(doc(COL_NOTAS, sid), { marks: DB.marks[sid]||{}, obs: DB.obs[sid]||{} }));
+    }
+    const perfil = { name: currentUser.name, subject: currentUser.subject || '', horario: currentUser.horario || null };
+    if(!igual(espejo.perfil, perfil)){
+      tareas.push(setDoc(doc(COL_DIRECTORIO, currentUser.id), perfil));
+      espejo.perfil = copia(perfil);
+    }
+  }
+
+  if(isStaff()){
+    for(const r of DB.reports){
+      const antes = (espejo.reports||[]).find(x => x.id === r.id);
+      if(!igual(antes, r)){
+        const { id, ...datos } = r;
+        tareas.push(setDoc(doc(COL_REPORTES, id), datos));
+      }
+    }
+    for(const a of (espejo.reports||[]))
+      if(!DB.reports.some(r => r.id === a.id)) tareas.push(deleteDoc(doc(COL_REPORTES, a.id)));
+  }
+
   try{
-    // Los mensajes no viajan en este bloque; tienen su propia colección
-    const { messages, ...resto } = data;
-    await setDoc(DOC_PORTAL, { json: JSON.stringify(resto) });
+    await Promise.all(tareas);
     storageOk = true;
   }catch(e){
     storageOk = false;
-    console.error('No se pudo guardar en Firestore:', e);
+    console.error('El servidor rechazó un cambio:', e);
+    toast('El servidor rechazó el cambio. Revisa la consola.', true);
   }
+  guardarEspejo(DB);
 }
-async function storeClear(){
-  try{
-    await deleteDoc(DOC_PORTAL);
-    const viejos = await getDocs(COL_MSG);
-    await Promise.all(viejos.docs.map(d => deleteDoc(d.ref)));
-  }catch(e){ console.error(e); }
-}
+
 async function borrarMensajesDe(userId){
   try{
     const [a, b] = await Promise.all([
@@ -419,25 +547,34 @@ async function borrarMensajesDe(userId){
   }catch(e){ console.error(e); }
 }
 
-/* Escucha del portal (notas, reportes, usuarios) */
-function escucharCambios(){
-  onSnapshot(DOC_PORTAL, snap => {
-    if(!snap.exists()) return;
-    if(snap.metadata.hasPendingWrites) return;   // es mi propio cambio, ya lo dibujé
-    let remoto;
-    try{ remoto = JSON.parse(snap.data().json); }catch(e){ return; }
-    remoto.messages = DB ? DB.messages : [];     // los mensajes los maneja la otra escucha
-    DB = remoto;
-  }, err => console.error('Se perdió la conexión con Firestore:', err));
+/* Borrado total · solo coordinación. Conserva la propia cuenta para poder volver a entrar. */
+async function borrarTodo(){
+  for(const c of [COL_USUARIOS, COL_DIRECTORIO, COL_NOTAS, COL_REPORTES, COL_ACUDIENTES, COL_MSG]){
+    try{
+      const d = await getDocs(c);
+      await Promise.all(d.docs.filter(x => x.id !== currentUser.id).map(x => deleteDoc(x.ref)));
+    }catch(e){ console.error(e); }
+  }
+  try{ await deleteDoc(DOC_NOMINA); }catch(e){}
+  try{ await deleteDoc(DOC_CONFIG); }catch(e){}
 }
 
-/* Escucha del chat: llega al instante porque cada mensaje es un documento diminuto */
+/* ---------- CHAT EN VIVO ----------
+   Dos escuchas: lo que envío y lo que recibo. El servidor no deja ver el resto. */
+function escucharCambios(){ /* cada colección se carga al entrar; el chat va aparte */ }
+
 function escucharMensajes(){
-  onSnapshot(query(COL_MSG, orderBy('orden')), snap => {
+  const mios = { enviados: [], recibidos: [] };
+  const pintar = () => {
     if(!DB) return;
-    DB.messages = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    DB.messages = [...mios.enviados, ...mios.recibidos].sort((a,b)=>(a.orden||0)-(b.orden||0));
     if(currentUser && activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
-  }, err => console.error('Se perdió la conexión con el chat:', err));
+  };
+  const mapear = snap => snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  onSnapshot(query(COL_MSG, where('from','==',currentUser.id)),
+    s => { mios.enviados = mapear(s); pintar(); }, e => console.error('Chat (enviados):', e));
+  onSnapshot(query(COL_MSG, where('to','==',currentUser.id)),
+    s => { mios.recibidos = mapear(s); pintar(); }, e => console.error('Chat (recibidos):', e));
 }
 
 /* ---------- Utilidades ---------- */
@@ -566,52 +703,12 @@ const APELLIDOS = [
   'Bolívar','Zapata','Arias','Bermúdez','Restrepo','Cordero','Villamil','Pineda','Acosta','Lozano',
   'Cifuentes','Aguirre','Rincón','Barrera','Camargo','Delgado','Escobar','Fajardo','Galindo','Higuera'
 ];
-function rng(seed){
-  let s = seed >>> 0;
-  return ()=>{ s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
-}
 /* Estudiantes fijos, vinculados a las cuentas de familia de prueba */
 const FIJOS = [
   {id:'st_juan',  name:'Juan Pérez',     curso:'602'},
   {id:'st_sofia', name:'Sofía Torres',   curso:'801'},
 ];
-function generarNomina(rand){
-  const out = [];
-  COURSES.forEach(curso=>{
-    const fijos = FIJOS.filter(f=>f.curso===curso);
-    out.push(...fijos);
-    const objetivo = 32 + Math.floor(rand()*9);          // entre 32 y 40 por curso
-    const usados = new Set(fijos.map(f=>f.name));
-    let intentos = 0;
-    while(usados.size < objetivo && intentos < 4000){
-      intentos++;
-      const nombre = NOMBRES[Math.floor(rand()*NOMBRES.length)];
-      const ap1 = APELLIDOS[Math.floor(rand()*APELLIDOS.length)];
-      const ap2 = APELLIDOS[Math.floor(rand()*APELLIDOS.length)];
-      if(ap1 === ap2) continue;
-      const full = `${nombre} ${ap1} ${ap2}`;
-      if(usados.has(full)) continue;
-      usados.add(full);
-      out.push({id:uid('st'), name:full, curso});
-    }
-  });
-  return out;
-}
 /* Notas iniciales: las 14 materias del periodo en curso para cada estudiante */
-function generarNotas(students, rand, term){
-  const marks = {};
-  students.forEach(s=>{
-    const nivel = 3.2 + rand()*1.2;                      // cada estudiante tiene su nivel
-    const fila = {};
-    SUBJECTS.forEach(m=>{
-      let v = nivel + (rand()-0.5)*1.6;
-      v = Math.max(1.5, Math.min(5, v));
-      fila[m] = Math.round(v*10)/10;
-    });
-    marks[s.id] = {[term]: fila};
-  });
-  return marks;
-}
 
 /* =====================================================================
    DATOS SEMILLA
@@ -624,22 +721,6 @@ const RECOVERY_Q = '¿Cuál es la palabra clave que te dio el colegio?';
 const TERMS = ['T1','T2','T3'];
 const TERM_ACTUAL = 'T2';
 
-async function seedDB(){
-  return {
-    subjects: SUBJECTS.slice(),
-    terms: TERMS.slice(),
-    students: [],
-    marks: {},
-    obs: {},
-    acudientes: [],
-    users: [
-      { id:'u_coord', code:COORD_CODE, name:'Coordinación académica', role:'coordinador',
-        subject:'', studentIds:[], bootstrap:true }
-    ],
-    messages: [],
-    reports: [],
-  };
-}
 
 /* =====================================================================
    ESTADO Y ACCESO A NOTAS
@@ -650,7 +731,6 @@ let activeTab = null;
 let activeContact = null;
 let fgUser = null;
 
-const save = () => storeSet(DB);
 const userById = id => DB.users.find(u=>u.id===id);
 const studentById = id => DB.students.find(s=>s.id===id);
 const studentName = id => (studentById(id)||{}).name || 'Estudiante eliminado';
@@ -699,25 +779,6 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
 /* =====================================================================
    ARRANQUE
    ===================================================================== */
-/* Los datos ya no se cargan al abrir la página: el servidor no los entrega
-   sin sesión iniciada. Solo se preparan después del login. */
-async function cargarDatos(){
-  DB = await storeGet();
-  if(!DB || !DB.users || !DB.users.length){
-    DB = await seedDB();
-    await save();
-  }
-  DB.terms = DB.terms || TERMS.slice();
-  DB.subjects = DB.subjects && DB.subjects.length ? DB.subjects : SUBJECTS.slice();
-  DB.marks = DB.marks || {};
-  DB.obs = DB.obs || {};
-  DB.students = DB.students || [];
-  DB.reports = DB.reports || [];
-  DB.messages = DB.messages || [];
-  DB.acudientes = DB.acudientes || [];
-  DB.students.forEach(s=>{ if(!s.curso) s.curso = '101'; });
-}
-
 let escuchasActivas = false;
 function activarEscuchas(){
   if(escuchasActivas) return;
@@ -769,26 +830,36 @@ async function doLogin(){
         ? 'Demasiados intentos fallidos. Espera unos minutos.'
         : 'No se pudo conectar. Revisa tu internet.');
   }
+  const uid2 = auth.currentUser.uid;
+  let cargado = null;
   try{
-    await cargarDatos();
+    cargado = await cargarTodo(uid2);
+    // Primer ingreso del portal: coordinación registra su propia ficha
+    if(!cargado && code === COORD_CODE){
+      await setDoc(doc(COL_USUARIOS, uid2), {
+        code: COORD_CODE, name: 'Coordinación académica',
+        role: 'coordinador', subject: '', studentIds: [], hijos: [], bootstrap: true
+      });
+      cargado = await cargarTodo(uid2);
+    }
   }catch(e){
+    console.error(e);
     $('btnLogin').disabled = false;
     await signOut(auth);
-    return showAlert('loginAlert','No se pudieron cargar los datos del colegio.');
+    return showAlert('loginAlert','No se pudieron cargar los datos. Revisa las reglas de Firestore.');
   }
-  const user = DB.users.find(u=>u.code.toUpperCase() === code);
   $('btnLogin').disabled = false;
-  if(!user){
+  if(!cargado){
     await signOut(auth);
-    return showAlert('loginAlert','Tu cuenta ya no está activa en el portal. Comunícate con coordinación.');
+    return showAlert('loginAlert','Tu cuenta no está registrada en el portal. Comunícate con coordinación.');
   }
-  const ac = DB.acudientes.find(a=>a.userId === user.id);
-  if(ac && ac.activo === false){
+  if(cargado.yo.activo === false){
     await signOut(auth);
     return showAlert('loginAlert','Esta cuenta está bloqueada. Comunícate con el colegio.');
   }
+  DB = cargado.base;
+  currentUser = cargado.yo;
   $('loginPass').value = '';
-  currentUser = user;
   enterApp();
   activarEscuchas();
 }
@@ -891,10 +962,7 @@ async function reiniciarPortal(){
   const escrito = prompt('Para confirmar, escribe exactamente:  BORRAR TODO');
   if(escrito !== 'BORRAR TODO') return toast('Cancelado: el texto no coincide.', true);
   toast('Borrando…');
-  await storeClear();
-  DB = await seedDB();
-  await save();
-  currentUser = null;
+  await borrarTodo();
   location.reload();
 }
 $('btnLogout').onclick = async ()=>{
@@ -1693,6 +1761,10 @@ async function addSubject(){
   await save(); toast('Materia agregada'); renderAdmin($('main'));
 }
 
+function hijosDe(ids){
+  // La familia recibe copia de los datos de sus hijos: no puede leer la nómina completa
+  return (ids||[]).map(studentById).filter(Boolean).map(x=>({ id:x.id, name:x.name, curso:x.curso }));
+}
 function nombresDe(ids){
   return (ids||[]).map(studentById).filter(Boolean).map(s=>`${s.name} (${s.curso})`).join(', ') || '—';
 }
@@ -1707,7 +1779,7 @@ async function addAcudiente(){
     if(ya.studentIds.includes(sid)) return toast('Ese acudiente ya está vinculado a ese estudiante.', true);
     ya.studentIds.push(sid);
     const cuenta = DB.users.find(u=>u.id===ya.userId);
-    if(cuenta) cuenta.studentIds = ya.studentIds.slice();
+    if(cuenta){ cuenta.studentIds = ya.studentIds.slice(); cuenta.hijos = hijosDe(ya.studentIds); }
     await save(); drawAcudientes();
     return toast('Estudiante agregado a un acudiente existente');
   }
@@ -1743,13 +1815,15 @@ function drawAcudientes(){
     if(!nombre || nombre.trim().length < 3) return toast('Cancelado: falta el nombre.', true);
     const code = makeCode('familia');
     const clave = tempPassword();
+    let nuevoUid;
     try{
-      await crearCuentaAuth(code, clave);
+      nuevoUid = await crearCuentaAuth(code, clave);
     }catch(e){
       return toast('No se pudo crear la cuenta: ' + (e.code || e.message), true);
     }
-    const nuevo = { id: uid('u'), code, name: nombre.trim(), role:'familia',
-                    subject:'', studentIds:(a.studentIds||[]).slice() };
+    const nuevo = { id: nuevoUid, code, name: nombre.trim(), role:'familia',
+                    subject:'', studentIds:(a.studentIds||[]).slice(),
+                    hijos: hijosDe(a.studentIds) };
     DB.users.push(nuevo);
     a.userId = nuevo.id;
     a.nombre = nombre.trim();
@@ -1763,6 +1837,8 @@ function drawAcudientes(){
     const a = DB.acudientes.find(x=>x.cedula===b.dataset.acb);
     if(!a) return;
     a.activo = a.activo === false;
+    const cuenta = DB.users.find(u=>u.id===a.userId);
+    if(cuenta) cuenta.activo = a.activo;      // el bloqueo viaja a la ficha de la cuenta
     await save(); drawAcudientes();
     toast(a.activo ? 'Acudiente activado' : 'Acudiente bloqueado: ya no puede entrar');
   });
@@ -1839,15 +1915,16 @@ async function addUser(){
   }
   const code = makeCode(role);
   const clave = tempPassword();
+  let nuevoUid;
   try{
-    await crearCuentaAuth(code, clave);      // la cuenta nace en el servidor, no solo aquí
+    nuevoUid = await crearCuentaAuth(code, clave);   // la cuenta nace en el servidor
   }catch(e){
     return toast('No se pudo crear la cuenta: ' + (e.code || e.message), true);
   }
   DB.users.push({
-    id: uid('u'), code, name, role,
+    id: nuevoUid, code, name, role,
     subject: role === 'profesor' ? $('uSubject').value : '',
-    studentIds,
+    studentIds, hijos: hijosDe(studentIds),
   });
   await save();
   renderAdmin($('main'));
