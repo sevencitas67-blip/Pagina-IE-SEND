@@ -121,6 +121,10 @@
     margin:22px 0 8px; font-weight:700;}
   .sub-head span{font-weight:400; text-transform:none; letter-spacing:0;}
   .zona-riesgo{border-color:#e6cdc8; background:#fdf7f6;}
+  .chips-check{display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px; max-height:210px; overflow:auto;
+    padding:10px; border:1px solid var(--line); border-radius:8px;}
+  .chips-check label{display:flex; align-items:center; gap:5px; font-size:12.5px;
+    padding:5px 9px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:var(--paper);}
   .aviso-horario{font-size:11.5px; padding:7px 12px; border-radius:7px; margin-bottom:8px;
     background:#f6e7e4; color:#8c2f22; border:1px solid #e6cdc8;}
   .aviso-horario.abierto{background:#e6f0e8; color:#25603a; border-color:#c9e0d1;}
@@ -505,9 +509,12 @@ async function save(){
   if(isProfe()){
     for(const sid of Object.keys(DB.marks)){
       if(!igual((espejo.marks||{})[sid], DB.marks[sid]) || !igual((espejo.obs||{})[sid], DB.obs[sid]))
-        tareas.push(setDoc(doc(COL_NOTAS, sid), { marks: DB.marks[sid]||{}, obs: DB.obs[sid]||{} }));
+        tareas.push(setDoc(doc(COL_NOTAS, sid), {
+          curso: studentCourse(sid),          // las reglas lo usan para saber si es tu curso
+          marks: DB.marks[sid]||{}, obs: DB.obs[sid]||{}
+        }));
     }
-    const perfil = { name: currentUser.name, subject: currentUser.subject || '', horario: currentUser.horario || null };
+    const perfil = { name: currentUser.name, subjects: currentUser.subjects || [], horario: currentUser.horario || null };
     if(!igual(espejo.perfil, perfil)){
       tareas.push(setDoc(doc(COL_DIRECTORIO, currentUser.id), perfil));
       espejo.perfil = copia(perfil);
@@ -535,6 +542,18 @@ async function save(){
     toast('El servidor rechazó el cambio. Revisa la consola.', true);
   }
   guardarEspejo(DB);
+}
+
+/* El profesor solo puede tocar el campo "cursos" de su propia ficha */
+async function guardarMisCursos(cursos){
+  try{
+    await setDoc(doc(COL_USUARIOS, currentUser.id), { cursos }, { merge:true });
+    storageOk = true;
+  }catch(e){
+    storageOk = false;
+    console.error('El servidor rechazó los cursos:', e);
+    toast('El servidor no aceptó el cambio de cursos.', true);
+  }
 }
 
 async function borrarMensajesDe(userId){
@@ -644,7 +663,7 @@ const courseCount = curso => DB.students.filter(s => s.curso === curso).length;
 function courseOptions(selected, allLabel){
   let html = allLabel ? `<option value="">${esc(allLabel)}</option>` : '';
   let lastGrade = null;
-  COURSES.forEach(c=>{
+  cursosVisibles().forEach(c=>{
     const g = gradeOf(c);
     if(g !== lastGrade){
       if(lastGrade !== null) html += '</optgroup>';
@@ -654,7 +673,7 @@ function courseOptions(selected, allLabel){
     const n = courseCount(c);
     html += `<option value="${c}"${c===selected?' selected':''}>${c}${n ? ' · ' + n + ' est.' : ' · vacío'}</option>`;
   });
-  return html + '</optgroup>';
+  return lastGrade === null ? html : html + '</optgroup>';
 }
 function fillStudents(selectEl, curso, keepId){
   const list = curso ? studentsIn(curso) : [];
@@ -668,7 +687,7 @@ function linkCourse(courseId, studentId, onChange){
   if(!cs || !ss) return;
   cs.addEventListener('change', ()=>{ fillStudents(ss, cs.value); if(onChange) onChange(); });
 }
-function defaultCourse(){ return COURSES.find(c=>courseCount(c) > 0) || '101'; }
+function defaultCourse(){ const v = cursosVisibles(); return v.find(c=>courseCount(c) > 0) || v[0] || '101'; }
 
 /* =====================================================================
    MATERIAS
@@ -740,6 +759,17 @@ const isProfe   = () => currentUser && currentUser.role === 'profesor';
 const isCoord   = () => currentUser && currentUser.role === 'coordinador';
 const isStaff   = () => isProfe() || isCoord();          // profesor o coordinador
 const isFamilia = () => currentUser && currentUser.role === 'familia';
+const misCursos    = () => (currentUser.cursos || []);
+const miDireccion  = () => currentUser.director || '';
+const dirijoCurso  = c => !!miDireccion() && miDireccion() === c;
+// Materias que este profesor puede calificar en ese curso
+const misMaterias  = curso => dirijoCurso(curso) ? DB.subjects.slice() : (currentUser.subjects || []);
+const cursosVisibles = () => {
+  if(!currentUser || !isProfe()) return COURSES.slice();
+  const set = new Set(currentUser.cursos || []);
+  if(currentUser.director) set.add(currentUser.director);
+  return COURSES.filter(c => set.has(c));
+};
 const nombreRol = r => r === 'coordinador' ? 'Coordinación' : r === 'profesor' ? 'Profesor' : 'Familia';
 const myStudents = () => (currentUser.studentIds||[]).map(studentById).filter(Boolean);
 
@@ -1111,7 +1141,7 @@ function renderMensajeria(main){
       <div class="nm">${esc(c.name)}<span class="dot"></span></div>
       <div class="subj">${last
         ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'')
-        : esc(c.role==='profesor' ? (c.subject||'Profesor') : nombreRol(c.role))}</div>
+        : esc(c.role==='profesor' ? ((c.subjects||[]).join(', ') || 'Profesor') : nombreRol(c.role))}</div>
     </button>`;
   }).join('');
   $('contacts').querySelectorAll('.contact').forEach(b=>{
@@ -1119,7 +1149,7 @@ function renderMensajeria(main){
   });
   const c = userById(activeContact);
   $('threadHead').textContent = c
-    ? `${c.name} · ${c.role==='profesor' ? (c.subject||'Profesor') : nombreRol(c.role)}`
+    ? `${c.name} · ${c.role==='profesor' ? ((c.subjects||[]).join(', ') || 'Profesor') : nombreRol(c.role)}`
     : '';
   $('btnSend').onclick = sendMessage;
   $('msgInput').onkeydown = e => { if(e.key==='Enter') sendMessage(); };
@@ -1298,8 +1328,9 @@ function drawBoletin(){
   }
   const s = studentById(notaStudent);
   const a = avgOf(s.id, notaTerm);
-  const perdidas = DB.subjects.filter(m=>{ const v = markOf(s.id, notaTerm, m); return v !== null && v < 3; }).length;
-  const sinNota = DB.subjects.filter(m=>markOf(s.id, notaTerm, m) === null).length;
+  const materias = isProfe() ? misMaterias(s.curso) : DB.subjects.slice();
+  const perdidas = materias.filter(m=>{ const v = markOf(s.id, notaTerm, m); return v !== null && v < 3; }).length;
+  const sinNota = materias.filter(m=>markOf(s.id, notaTerm, m) === null).length;
 
   panel.innerHTML = `
     <div class="stat-strip">
@@ -1312,9 +1343,11 @@ function drawBoletin(){
         <h3>${esc(s.name)} <span class="curso-chip">${esc(s.curso)}</span></h3>
         <span class="tag">Periodo ${esc(notaTerm)}</span>
       </div>
+      ${isProfe() && !dirijoCurso(s.curso) ? `<p class="hint">Ves solo las materias que dictas. Como director de curso verías todas.</p>` : ''}
       <div class="table-wrap"><table class="boletin">
         <thead><tr><th>Materia</th><th>Nota (1.0 – 5.0)</th><th>Observación</th></tr></thead>
-        <tbody>${DB.subjects.map((m,i)=>{
+        <tbody>${materias.map((m)=>{
+          const i = DB.subjects.indexOf(m);
           const v = markOf(s.id, notaTerm, m);
           return `<tr>
             <td>${esc(m)}</td>
@@ -1426,9 +1459,10 @@ function renderNotasFamilia(main){
    ===================================================================== */
 let editingReport = null;
 function renderReportes(main){
-  const profe = isStaff();                 // coordinación y profesores publican
-  const mine = profe ? null : (currentUser.studentIds || []);
-  const list = profe ? DB.reports : DB.reports.filter(r=>mine.includes(r.studentId));
+  const profe = isCoord();                 // solo coordinación publica reportes
+  const list = isCoord() ? DB.reports
+    : isProfe() ? DB.reports.filter(r => cursosVisibles().includes(studentCourse(r.studentId)))
+    : DB.reports.filter(r => (currentUser.studentIds||[]).includes(r.studentId));
   const editing = editingReport ? DB.reports.find(x=>x.id===editingReport) : null;
   const formCurso = editing ? studentCourse(editing.studentId) : defaultCourse();
 
@@ -1455,9 +1489,11 @@ function renderReportes(main){
         <button class="btn" id="btnSaveReport">${editing ? 'Guardar cambios' : 'Publicar reporte'}</button>
         ${editing ? '<button class="btn ghost" id="btnCancelReport">Cancelar</button>' : ''}
       </div>
-    </div>` : `<div class="locked-banner">🔒 Solo ves los reportes del estudiante vinculado a tu cuenta.</div>`}
+    </div>` : `<div class="locked-banner">🔒 ${isProfe()
+      ? 'Los reportes los publica coordinación. Aquí ves los de tus cursos.'
+      : 'Solo ves los reportes del estudiante vinculado a tu cuenta.'}</div>`}
 
-    ${profe ? `
+    ${isStaff() ? `
     <div class="card">
       <div class="grid">
         <div class="form-row" style="margin:0"><label for="repFCurso">Filtrar por curso</label>
@@ -1469,15 +1505,15 @@ function renderReportes(main){
 
     <div class="card" id="reportsList"></div>`;
 
-  if(profe){
-    fillStudents($('repStudent'), formCurso, editing ? editing.studentId : null);
-    linkCourse('repCurso','repStudent');
-    if(editing){
+  if(isStaff()){
+    if(profe) fillStudents($('repStudent'), formCurso, editing ? editing.studentId : null);
+    if(profe) linkCourse('repCurso','repStudent');
+    if(profe && editing){
       $('repTitle').value = editing.title;
       $('repBody').value = editing.body;
       $('btnCancelReport').onclick = ()=>{ editingReport = null; renderReportes(main); };
     }
-    $('btnSaveReport').onclick = saveReport;
+    if(profe) $('btnSaveReport').onclick = saveReport;
     $('repFCurso').onchange = ()=>{
       const c = $('repFCurso').value, ss = $('repFStudent');
       ss.innerHTML = '<option value="">Todos</option>' +
@@ -1501,7 +1537,7 @@ function drawReports(list){
       <div class="meta">${esc(studentName(r.studentId))} · curso ${esc(studentCourse(r.studentId))} · por ${esc(userName(r.authorId))} · ${esc(r.date)}</div>
       <h4>${esc(r.title)}</h4>
       <p>${esc(r.body)}</p>
-      ${isStaff() ? `<div class="row-actions">
+      ${isCoord() ? `<div class="row-actions">
         <button class="btn ghost tiny" data-edit="${r.id}">Editar</button>
         <button class="btn danger tiny" data-del="${r.id}">Eliminar</button></div>` : ''}
     </div>`).join('')
@@ -1619,8 +1655,10 @@ function renderAdmin(main){
         <div class="form-row"><label for="uRole">Tipo de cuenta</label>
           <select id="uRole"><option value="profesor">Profesor</option><option value="coordinador">Coordinación</option></select></div>
         <div class="form-row"><label for="uName">Nombre</label><input id="uName" type="text" placeholder="Nombre completo"></div>
-        <div class="form-row" id="wrapSubject"><label for="uSubject">Materia que dicta</label>
-          <select id="uSubject">${DB.subjects.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
+        <div class="form-row" id="wrapSubject" style="grid-column:1/-1"><label>Materias que dicta</label>
+          <div class="chips-check">${DB.subjects.map((m,i)=>`<label><input type="checkbox" class="uMat" value="${esc(m)}"> ${esc(m)}</label>`).join('')}</div></div>
+        <div class="form-row" id="wrapDirector"><label for="uDirector">Director de curso (opcional)</label>
+          <select id="uDirector"><option value="">Ninguno</option>${COURSES.map(c=>`<option value="${c}">${c}</option>`).join('')}</select></div>
         <div class="form-row" id="wrapCurso" hidden><label for="uCurso">Curso del estudiante</label>
           <select class="curso" id="uCurso">${courseOptions(admCurso)}</select></div>
         <div class="form-row" id="wrapStudent" hidden><label for="uStudent">Estudiante vinculado</label>
@@ -1657,8 +1695,9 @@ function renderAdmin(main){
   linkCourse('uCurso','uStudent');
   $('uRole').onchange = ()=>{
     const fam = $('uRole').value === 'familia';
-    $('wrapSubject').hidden = $('uRole').value !== 'profesor';
-    $('wrapSubject').hidden = fam;
+    const esProf = $('uRole').value === 'profesor';
+    $('wrapSubject').hidden = !esProf;
+    $('wrapDirector').hidden = !esProf;
     $('wrapCurso').hidden = !fam;
     $('wrapStudent').hidden = !fam;
   };
@@ -1860,7 +1899,7 @@ function drawUsers(){
   const q = norm(uQuery);
   const coincide = u => {
     if(!q) return true;
-    const extra = u.role==='profesor' ? (u.subject||'')
+    const extra = u.role==='profesor' ? ((u.subjects||[]).join(' ') + ' ' + (u.director||''))
       : (u.studentIds||[]).map(id=>`${studentName(id)} ${studentCourse(id)}`).join(' ');
     return norm(u.name).includes(q) || norm(u.code).includes(q) || norm(extra).includes(q);
   };
@@ -1868,7 +1907,9 @@ function drawUsers(){
       <td class="code-cell">${esc(u.code)}</td>
       <td>${esc(u.name)}${u.id===currentUser.id?' <span class="tag">tú</span>':''}</td>
       <td>${u.role==='coordinador' ? 'Coordinación'
-        : u.role==='profesor' ? esc(u.subject||'—')
+        : u.role==='profesor' ? (esc((u.subjects||[]).join(', ') || 'sin materias')
+            + ((u.cursos||[]).length ? ` · cursos ${esc((u.cursos||[]).join(', '))}` : ' · sin cursos')
+            + (u.director ? ` · <b>director ${esc(u.director)}</b>` : ''))
         : esc((u.studentIds||[]).map(id=>`${studentName(id)} · ${studentCourse(id)}`).join(', ') || 'Sin estudiante')}</td>
       <td style="white-space:nowrap">
         <button class="btn ghost tiny" data-rp="${u.id}">Restablecer contraseña</button>
@@ -1923,7 +1964,9 @@ async function addUser(){
   }
   DB.users.push({
     id: nuevoUid, code, name, role,
-    subject: role === 'profesor' ? $('uSubject').value : '',
+    subjects: role === 'profesor' ? [...document.querySelectorAll('.uMat:checked')].map(i=>i.value) : [],
+    director: role === 'profesor' ? $('uDirector').value : '',
+    cursos: [],
     studentIds, hijos: hijosDe(studentIds),
   });
   await save();
@@ -1940,7 +1983,8 @@ function renderCuenta(main){
   const vinculo = isCoord()
     ? 'Acceso a administración y reportes. No ve las notas.'
     : isProfe()
-      ? `Profesor(a) de ${esc(currentUser.subject || '—')}`
+      ? `Profesor(a) de ${esc((currentUser.subjects||[]).join(', ') || 'materias sin asignar')}`
+        + (currentUser.director ? ` · director de curso ${esc(currentUser.director)}` : '')
       : esc(myStudents().map(s=>`${s.name} · curso ${s.curso}`).join(', ') || 'Sin estudiante vinculado');
 
   main.innerHTML = `
@@ -1958,6 +2002,17 @@ function renderCuenta(main){
     </div>
 
     ${isProfe() ? `
+    <div class="card">
+      <h3>Mis cursos</h3>
+      <p class="subtitle" style="margin-bottom:16px">Marca los cursos que te tocaron este año. Solo verás y calificarás estudiantes de estos cursos, en las materias que dictas. Puedes cambiarlos cuando te asignen más.</p>
+      <div class="chips-check" id="misCursosBox">
+        ${COURSES.map(c=>`<label><input type="checkbox" class="cCur" value="${c}"
+          ${(currentUser.cursos||[]).includes(c)?'checked':''}> ${c}</label>`).join('')}
+      </div>
+      <button class="btn" id="btnSaveCursos">Guardar mis cursos</button>
+      ${currentUser.director ? `<p class="hint">Eres director del curso ${esc(currentUser.director)}: ahí ves todas las materias, los reportes y los datos de los estudiantes. Esa asignación la hace coordinación.</p>` : '<p class="hint">La dirección de curso la asigna coordinación.</p>'}
+    </div>
+
     <div class="card">
       <h3>Horario de atención a familias</h3>
       <p class="subtitle" style="margin-bottom:16px">Las familias solo podrán escribirte dentro de estos días y horas.</p>
@@ -1985,6 +2040,18 @@ function renderCuenta(main){
     </div>
 
 `;
+
+  if($('btnSaveCursos')){
+    $('btnSaveCursos').onclick = async ()=>{
+      const cursos = [...document.querySelectorAll('.cCur:checked')].map(i=>i.value);
+      currentUser.cursos = cursos;
+      const yo3 = DB.users.find(u=>u.id===currentUser.id);
+      if(yo3) yo3.cursos = cursos;
+      await guardarMisCursos(cursos);
+      toast(cursos.length ? `Guardado: ${cursos.length} curso(s)` : 'Quedaste sin cursos asignados');
+      renderCuenta(main);
+    };
+  }
 
   if($('btnSaveHorario')){
     $('btnSaveHorario').onclick = async ()=>{
