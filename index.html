@@ -241,14 +241,9 @@
       <input class="txt" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password">
       <button class="btn-primary" id="btnLogin">Entrar al portal</button>
       <div class="gate-foot">
-        <button class="link-btn" id="btnGoForgot">¿Olvidaste tu contraseña?</button>
-        <button class="link-btn" id="btnGoRegistro">Registrarme como acudiente</button>
       </div>
-      <details class="demo-box" id="boxPrimerUso" hidden>
-        <summary>Primer uso del portal</summary>
-        <table id="demoTable"></table>
-        <p class="gate-note" style="text-align:left">Esta caja desaparece para siempre en cuanto coordinación cambie su contraseña.</p>
-      </details>
+      <p class="gate-note">¿Olvidaste tu contraseña o no tienes cuenta? Comunícate con coordinación del colegio.</p>
+      <table id="demoTable" hidden></table>
     </div>
   </div>
 </div>
@@ -347,6 +342,8 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot,
          collection, addDoc, query, orderBy, where, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -366,7 +363,20 @@ const firebaseConfig = {
   appId: "1:68179987058:web:0afc98e4322684b4b4d0eb"
 };
 
-const nube = getFirestore(initializeApp(firebaseConfig));
+const appPrincipal = initializeApp(firebaseConfig);
+const nube = getFirestore(appPrincipal);
+const auth = getAuth(appPrincipal);
+
+/* App secundaria: crea cuentas nuevas sin cerrar la sesión de quien las crea */
+const appAlta = initializeApp(firebaseConfig, 'alta');
+const authAlta = getAuth(appAlta);
+
+/* El código de acceso se convierte en un correo interno. El usuario nunca lo ve. */
+const emailDe = code => String(code||'').trim().toLowerCase().replace(/\s+/g,'') + '@ie-send.local';
+async function crearCuentaAuth(code, pass){
+  await createUserWithEmailAndPassword(authAlta, emailDe(code), pass);
+  await signOut(authAlta);
+}
 const DOC_PORTAL = doc(nube, 'portal', 'db');
 const COL_MSG = collection(nube, 'mensajes');   // los mensajes van aparte: son pequeños y rápidos
 let storageOk = true;
@@ -615,8 +625,6 @@ const TERMS = ['T1','T2','T3'];
 const TERM_ACTUAL = 'T2';
 
 async function seedDB(){
-  const ph = await hashText(COORD_PASS);
-  const ah = await hashText(DEMO_ANSWER);
   return {
     subjects: SUBJECTS.slice(),
     terms: TERMS.slice(),
@@ -626,7 +634,7 @@ async function seedDB(){
     acudientes: [],
     users: [
       { id:'u_coord', code:COORD_CODE, name:'Coordinación académica', role:'coordinador',
-        subject:'', studentIds:[], passHash:ph, recQ:RECOVERY_Q, recHash:ah, bootstrap:true }
+        subject:'', studentIds:[], bootstrap:true }
     ],
     messages: [],
     reports: [],
@@ -691,37 +699,40 @@ const fmt = v => v === null ? '—' : v.toFixed(1);
 /* =====================================================================
    ARRANQUE
    ===================================================================== */
-(async function boot(){
-  // Si Firestore no responde en 10 segundos, seguimos igual en vez de quedarnos cargando
-  const conLimite = p => Promise.race([p, new Promise(r => setTimeout(()=>r(null), 10000))]);
-  DB = await conLimite(storeGet());
-  if(!DB || !DB.users || !DB.users.length || !DB.marks){
+/* Los datos ya no se cargan al abrir la página: el servidor no los entrega
+   sin sesión iniciada. Solo se preparan después del login. */
+async function cargarDatos(){
+  DB = await storeGet();
+  if(!DB || !DB.users || !DB.users.length){
     DB = await seedDB();
-    conLimite(save());
+    await save();
   }
   DB.terms = DB.terms || TERMS.slice();
   DB.subjects = DB.subjects && DB.subjects.length ? DB.subjects : SUBJECTS.slice();
   DB.marks = DB.marks || {};
   DB.obs = DB.obs || {};
+  DB.students = DB.students || [];
+  DB.reports = DB.reports || [];
   DB.messages = DB.messages || [];
   DB.acudientes = DB.acudientes || [];
   DB.students.forEach(s=>{ if(!s.curso) s.curso = '101'; });
-  $('boot').hidden = true;
-  $('viewLogin').hidden = false;
-  renderDemoTable();
+}
+
+let escuchasActivas = false;
+function activarEscuchas(){
+  if(escuchasActivas) return;
+  escuchasActivas = true;
   setInterval(()=>{ if(currentUser && activeTab==='mensajeria') actualizarComposer(); }, 30000);
   escucharCambios();
   escucharMensajes();
+}
+
+(function boot(){
+  $('boot').hidden = true;
+  $('viewLogin').hidden = false;
 })();
 
-function renderDemoTable(){
-  const coord = DB.users.find(u=>u.role==='coordinador' && u.bootstrap);
-  const caja = $('boxPrimerUso');
-  caja.hidden = !coord;                       // sin cuenta estrenable, ni se muestra
-  if(!coord) return;
-  $('demoTable').innerHTML = `<tr><td>${esc(coord.code)}</td><td>${esc(coord.name)}</td>
-    <td>Coordinación</td><td class="mono">${esc(COORD_PASS)}</td></tr>`;
-}
+function renderDemoTable(){ /* las credenciales ya no se muestran en pantalla */ }
 
 /* =====================================================================
    ACCESO
@@ -744,25 +755,48 @@ async function doLogin(){
   const code = $('loginCode').value.trim().toUpperCase();
   const pass = $('loginPass').value;
   if(!code || !pass) return showAlert('loginAlert','Escribe tu código y tu contraseña.');
+  $('btnLogin').disabled = true;
+  showAlert('loginAlert','');
+  try{
+    // 1. El servidor valida quién eres. Sin esto no entrega ningún dato.
+    await signInWithEmailAndPassword(auth, emailDe(code), pass);
+  }catch(e){
+    $('btnLogin').disabled = false;
+    const suave = ['auth/invalid-credential','auth/wrong-password','auth/user-not-found','auth/invalid-email'];
+    return showAlert('loginAlert', suave.includes(e.code)
+      ? 'El código o la contraseña no coinciden. Revísalos e inténtalo otra vez.'
+      : e.code === 'auth/too-many-requests'
+        ? 'Demasiados intentos fallidos. Espera unos minutos.'
+        : 'No se pudo conectar. Revisa tu internet.');
+  }
+  try{
+    await cargarDatos();
+  }catch(e){
+    $('btnLogin').disabled = false;
+    await signOut(auth);
+    return showAlert('loginAlert','No se pudieron cargar los datos del colegio.');
+  }
   const user = DB.users.find(u=>u.code.toUpperCase() === code);
-  const ph = await hashText(pass);
-  if(!user || user.passHash !== ph){
-    return showAlert('loginAlert','El código o la contraseña no coinciden. Revísalos e inténtalo otra vez.');
+  $('btnLogin').disabled = false;
+  if(!user){
+    await signOut(auth);
+    return showAlert('loginAlert','Tu cuenta ya no está activa en el portal. Comunícate con coordinación.');
   }
   const ac = DB.acudientes.find(a=>a.userId === user.id);
   if(ac && ac.activo === false){
+    await signOut(auth);
     return showAlert('loginAlert','Esta cuenta está bloqueada. Comunícate con el colegio.');
   }
-  showAlert('loginAlert','');
   $('loginPass').value = '';
   currentUser = user;
   enterApp();
+  activarEscuchas();
 }
 /* ---------- Registro de acudiente ---------- */
 const soloDigitos = t => String(t||'').replace(/\D/g,'');
 let regAcudiente = null;
 
-$('btnGoRegistro').onclick = ()=>{
+const _regDeshabilitado = ()=>{
   showAlert('regAlert','');
   $('regStep1').hidden = false; $('regStep2').hidden = true; $('regStep3').hidden = true;
   $('regCedula').value=''; $('regNombre').value=''; $('regPass').value=''; $('regPass2').value='';
@@ -812,7 +846,7 @@ $('btnRegSave').onclick = async ()=>{
   $('regStep2').hidden = true; $('regStep3').hidden = false;
 };
 
-$('btnGoForgot').onclick = ()=>{
+const _forgotDeshabilitado = ()=>{
   showAlert('forgotAlert','');
   $('forgotStep1').hidden = false; $('forgotStep2').hidden = true;
   $('fgCode').value=''; $('fgAnswer').value=''; $('fgNew').value=''; $('fgNew2').value='';
@@ -863,12 +897,9 @@ async function reiniciarPortal(){
   currentUser = null;
   location.reload();
 }
-$('btnLogout').onclick = ()=>{
-  currentUser = null; activeTab = null; activeContact = null;
-  $('app').classList.remove('active');
-  $('loginCode').value=''; $('loginPass').value='';
-  showAlert('loginAlert','');
-  gate('viewLogin');
+$('btnLogout').onclick = async ()=>{
+  try{ await signOut(auth); }catch(e){}
+  location.reload();          // corta la sesión y limpia todo lo que había en memoria
 };
 
 /* =====================================================================
@@ -1498,7 +1529,7 @@ function renderAdmin(main){
 
     <div class="card">
       <div class="card-head"><h3>Acudientes autorizados</h3></div>
-      <p class="subtitle" style="margin-bottom:16px">Anota la cédula que tomaste en la reunión y el estudiante que le corresponde. El nombre lo escribe el acudiente al registrarse y aparece solo en esta tabla.</p>
+      <p class="subtitle" style="margin-bottom:16px">Anota la cédula que tomaste en la reunión y el estudiante que le corresponde. Después usa “Crear cuenta” en la fila para generar su código y su contraseña temporal.</p>
       <div class="grid">
         <div class="form-row"><label for="acCedula">Cédula</label><input id="acCedula" type="text" inputmode="numeric" placeholder="1000123456"></div>
         <div class="form-row"><label for="acCurso">Curso</label><select class="curso" id="acCurso">${courseOptions(admCurso)}</select></div>
@@ -1543,7 +1574,7 @@ function renderAdmin(main){
         <table><thead><tr><th>Código</th><th>Nombre</th><th>Estudiante(s)</th><th></th></tr></thead>
         <tbody id="uBodyF"></tbody></table>
       </div>
-      <p class="hint">Las cuentas nuevas nacen con la contraseña <b class="mono">clave123</b> y la pregunta de seguridad del colegio (respuesta: <b class="mono">cuaderno</b>). Pídele a la persona que la cambie en “Mi cuenta”.</p>
+      <p class="hint">Al crear la cuenta verás una sola vez su código y una contraseña temporal. Anótalos y entrégalos en mano: no se vuelven a mostrar.</p>
     </div>`;
 
   fillStudents($('acStudent'), $('acCurso').value);
@@ -1699,10 +1730,34 @@ function drawAcudientes(){
       <td>${esc(nombresDe(a.studentIds))}</td>
       <td>${estado}</td>
       <td style="white-space:nowrap">
+        ${cuenta ? '' : `<button class="btn tiny" data-acc="${esc(a.cedula)}">Crear cuenta</button>`}
         <button class="btn ghost tiny" data-acb="${esc(a.cedula)}">${a.activo===false?'Activar':'Bloquear'}</button>
         <button class="btn danger tiny" data-acr="${esc(a.cedula)}">Retirar</button>
       </td></tr>`;
   }).join('') : '<tr><td colspan="5" class="empty">Todavía no hay acudientes autorizados.</td></tr>';
+
+  $('acBody').querySelectorAll('[data-acc]').forEach(b=>b.onclick = async ()=>{
+    const a = DB.acudientes.find(x=>x.cedula===b.dataset.acc);
+    if(!a) return;
+    const nombre = prompt('Nombre completo del acudiente (cédula ' + a.cedula + '):', a.nombre || '');
+    if(!nombre || nombre.trim().length < 3) return toast('Cancelado: falta el nombre.', true);
+    const code = makeCode('familia');
+    const clave = tempPassword();
+    try{
+      await crearCuentaAuth(code, clave);
+    }catch(e){
+      return toast('No se pudo crear la cuenta: ' + (e.code || e.message), true);
+    }
+    const nuevo = { id: uid('u'), code, name: nombre.trim(), role:'familia',
+                    subject:'', studentIds:(a.studentIds||[]).slice() };
+    DB.users.push(nuevo);
+    a.userId = nuevo.id;
+    a.nombre = nombre.trim();
+    await save(); drawAcudientes();
+    await confirmDialog('Cuenta creada',
+      `Entrega estos datos a ${nuevo.name}:\n\nCódigo: ${code}\nContraseña temporal: ${clave}\n\nDebe cambiarla al entrar. Esta pantalla no se vuelve a mostrar.`,
+      'Entendido', true);
+  });
 
   $('acBody').querySelectorAll('[data-acb]').forEach(b=>b.onclick = async ()=>{
     const a = DB.acudientes.find(x=>x.cedula===b.dataset.acb);
@@ -1755,18 +1810,15 @@ function drawUsers(){
 
   document.querySelectorAll('#uBodyP [data-rp], #uBodyF [data-rp]').forEach(b=>b.onclick = async ()=>{
     const u = userById(b.dataset.rp);
-    const ok = await confirmDialog('Restablecer contraseña',
-      `Se generará una contraseña temporal para ${u.name}. La actual dejará de servir.`, 'Restablecer');
-    if(!ok) return;
-    const tmp = tempPassword();
-    u.passHash = await hashText(tmp);
-    await save();
-    await confirmDialog('Contraseña temporal', `Entrega esta contraseña a ${u.name}:\n\n${tmp}\n\nDebe cambiarla desde “Mi cuenta”.`, 'Entendido', true);
-    renderAdmin($('main'));
+    await confirmDialog('Restablecer contraseña',
+      `Las contraseñas ahora las guarda el servidor, no el portal.\n\nPara restablecer la de ${u.name}:\n\n1. Entra a console.firebase.google.com\n2. Authentication → Users\n3. Busca ${emailDe(u.code)}\n4. Menú de tres puntos → Reset password`,
+      'Entendido', true);
   });
   document.querySelectorAll('#uBodyP [data-du], #uBodyF [data-du]').forEach(b=>b.onclick = async ()=>{
     const u = userById(b.dataset.du);
-    const ok = await confirmDialog('Eliminar cuenta', `${u.name} perderá el acceso al portal. Sus mensajes se borrarán.`, 'Eliminar');
+    const ok = await confirmDialog('Eliminar cuenta',
+      `${u.name} perderá el acceso al portal y sus mensajes se borrarán.\n\nIMPORTANTE: para cerrarle el acceso por completo, borra también ${emailDe(u.code)} en Firebase → Authentication → Users.`,
+      'Eliminar');
     if(!ok) return;
     DB.users = DB.users.filter(x=>x.id!==u.id);
     const ac = DB.acudientes.find(a=>a.userId===u.id);
@@ -1786,17 +1838,22 @@ async function addUser(){
     studentIds = [sid];
   }
   const code = makeCode(role);
+  const clave = tempPassword();
+  try{
+    await crearCuentaAuth(code, clave);      // la cuenta nace en el servidor, no solo aquí
+  }catch(e){
+    return toast('No se pudo crear la cuenta: ' + (e.code || e.message), true);
+  }
   DB.users.push({
     id: uid('u'), code, name, role,
     subject: role === 'profesor' ? $('uSubject').value : '',
     studentIds,
-    passHash: await hashText(DEMO_PASS),
-    recQ: RECOVERY_Q,
-    recHash: await hashText(DEMO_ANSWER),
   });
   await save();
   renderAdmin($('main'));
-  await confirmDialog('Cuenta creada', `Código de acceso de ${name}:\n\n${code}\n\nContraseña inicial: ${DEMO_PASS}`, 'Entendido', true);
+  await confirmDialog('Cuenta creada',
+    `Entrega estos datos a ${name}:\n\nCódigo: ${code}\nContraseña temporal: ${clave}\n\nDebe cambiarla desde “Mi cuenta” al entrar. Esta pantalla no se vuelve a mostrar.`,
+    'Entendido', true);
 }
 
 /* =====================================================================
@@ -1850,15 +1907,7 @@ function renderCuenta(main){
       <button class="btn" id="btnChangePass">Cambiar contraseña</button>
     </div>
 
-    <div class="card">
-      <h3>Pregunta de seguridad</h3>
-      <p class="subtitle" style="margin-bottom:16px">Con esta pregunta puedes recuperar tu acceso si olvidas la contraseña.</p>
-      <div class="form-row"><label for="sqQ">Pregunta</label>
-        <input id="sqQ" type="text" value="${esc(currentUser.recQ||'')}" placeholder="Ej: ¿Cómo se llamaba mi primera mascota?"></div>
-      <div class="form-row"><label for="sqA">Respuesta</label>
-        <input id="sqA" type="text" placeholder="Escribe la respuesta (se guarda cifrada)"></div>
-      <button class="btn" id="btnSaveQ">Guardar pregunta</button>
-    </div>`;
+`;
 
   if($('btnSaveHorario')){
     $('btnSaveHorario').onclick = async ()=>{
@@ -1877,21 +1926,22 @@ function renderCuenta(main){
 
   $('btnChangePass').onclick = async ()=>{
     const oldp = $('cpOld').value, p1 = $('cpNew').value, p2 = $('cpNew2').value;
-    if(await hashText(oldp) !== currentUser.passHash) return toast('La contraseña actual no es correcta.', true);
     if(p1.length < 6) return toast('La nueva contraseña necesita al menos 6 caracteres.', true);
     if(p1 !== p2) return toast('Las dos contraseñas nuevas no son iguales.', true);
-    currentUser.passHash = await hashText(p1);
+    try{
+      await signInWithEmailAndPassword(auth, emailDe(currentUser.code), oldp);  // confirma que eres tú
+    }catch(e){
+      return toast('La contraseña actual no es correcta.', true);
+    }
+    try{
+      await updatePassword(auth.currentUser, p1);
+    }catch(e){
+      return toast('No se pudo cambiar: ' + (e.code || e.message), true);
+    }
     const yo2 = DB.users.find(u=>u.id===currentUser.id);
-    if(yo2){ yo2.passHash = currentUser.passHash; delete yo2.bootstrap; }
+    if(yo2) delete yo2.bootstrap;
     delete currentUser.bootstrap;
     await save(); toast('Contraseña cambiada'); renderCuenta(main);
-  };
-  $('btnSaveQ').onclick = async ()=>{
-    const q = $('sqQ').value.trim(), a = $('sqA').value.trim();
-    if(!q || !a) return toast('Escribe la pregunta y la respuesta.', true);
-    currentUser.recQ = q;
-    currentUser.recHash = await hashText(norm(a));
-    await save(); toast('Pregunta de seguridad guardada'); renderCuenta(main);
   };
 }
 </script>
