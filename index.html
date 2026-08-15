@@ -424,6 +424,7 @@ async function cargarTodo(uid){
   const base = {
     subjects: (config.subjects && config.subjects.length) ? config.subjects : SUBJECTS.slice(),
     terms: config.terms || TERMS.slice(),
+    limpiar: config.limpiar || [],
     students: [], marks: {}, obs: {}, users: [], acudientes: [], reports: [], messages: []
   };
 
@@ -467,7 +468,7 @@ async function cargarTodo(uid){
 
 function guardarEspejo(d){
   espejo = {
-    config: { subjects: d.subjects, terms: d.terms },
+    config: { subjects: d.subjects, terms: d.terms, limpiar: d.limpiar||[] },
     students: copia(d.students), users: copia(d.users),
     acudientes: copia(d.acudientes), reports: copia(d.reports),
     marks: copia(d.marks), obs: copia(d.obs),
@@ -481,8 +482,8 @@ async function save(){
   const tareas = [];
 
   if(isCoord()){
-    if(!igual(espejo.config, {subjects:DB.subjects, terms:DB.terms}))
-      tareas.push(setDoc(DOC_CONFIG, {subjects:DB.subjects, terms:DB.terms}));
+    const cfg = {subjects:DB.subjects, terms:DB.terms, limpiar:DB.limpiar||[]};
+    if(!igual(espejo.config, cfg)) tareas.push(setDoc(DOC_CONFIG, cfg));
     if(!igual(espejo.students, DB.students))
       tareas.push(setDoc(DOC_NOMINA, {students: DB.students}));
 
@@ -554,6 +555,16 @@ async function guardarMisCursos(cursos){
     console.error('El servidor rechazó los cursos:', e);
     toast('El servidor no aceptó el cambio de cursos.', true);
   }
+}
+
+/* Crea la ficha del usuario y comprueba que quedó. Si el servidor la rechaza,
+   avisa aquí mismo en vez de dejar una cuenta que no puede entrar. */
+async function crearFicha(u){
+  const { id, horario, ...datos } = u;
+  await setDoc(doc(COL_USUARIOS, id), datos);
+  const check = await getDoc(doc(COL_USUARIOS, id));
+  if(!check.exists()) throw new Error('La ficha no quedó guardada en la base.');
+  espejo.users = [...(espejo.users||[]), copia(u)];   // ya está al día
 }
 
 async function borrarMensajesDe(userId){
@@ -880,8 +891,9 @@ async function doLogin(){
   }
   $('btnLogin').disabled = false;
   if(!cargado){
+    console.warn('Sin ficha en usuarios/' + uid2 + ' para el código ' + code);
     await signOut(auth);
-    return showAlert('loginAlert','Tu cuenta no está registrada en el portal. Comunícate con coordinación.');
+    return showAlert('loginAlert','Tu cuenta existe pero no tiene ficha en el portal. Coordinación debe volver a crearla.');
   }
   if(cargado.yo.activo === false){
     await signOut(auth);
@@ -1627,7 +1639,15 @@ function renderAdmin(main){
 
     <div class="card zona-riesgo">
       <div class="card-head"><h3>Zona de riesgo</h3></div>
-      <p class="subtitle" style="margin-bottom:14px">Borra el portal entero y deja solo la cuenta inicial de coordinación. Pide confirmación escrita.</p>
+      ${(DB.limpiar||[]).length ? `
+      <h4 class="sub-head">Correos por borrar en Firebase <span>· ${(DB.limpiar||[]).length}</span></h4>
+      <p class="subtitle" style="margin-bottom:10px">Estas cuentas ya no tienen acceso al portal. Bórralas en Firebase → Authentication → Users (menú de tres puntos al final de la fila) para dejar la lista limpia.</p>
+      <div class="table-wrap" style="margin-bottom:8px"><table><tbody>
+        ${(DB.limpiar||[]).map(m=>`<tr><td class="mono">${esc(m)}</td>
+          <td style="text-align:right"><button class="btn ghost tiny" data-limp="${esc(m)}">Ya la borré</button></td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+
+      <p class="subtitle" style="margin:14px 0">Borra el portal entero y deja solo la cuenta inicial de coordinación. Pide confirmación escrita.</p>
       <button class="btn danger" id="btnWipe">Borrar todos los datos</button>
     </div>
 
@@ -1690,6 +1710,10 @@ function renderAdmin(main){
   $('uQuery').oninput = ()=>{ uQuery = $('uQuery').value; drawUsers(); };
   $('btnAddAcudiente').onclick = addAcudiente;
   $('btnWipe').onclick = reiniciarPortal;
+  document.querySelectorAll('[data-limp]').forEach(b=>b.onclick = async ()=>{
+    DB.limpiar = (DB.limpiar||[]).filter(m => m !== b.dataset.limp);
+    await save(); renderAdmin($('main'));
+  });
 
   fillStudents($('uStudent'), $('uCurso').value);
   linkCourse('uCurso','uStudent');
@@ -1861,8 +1885,16 @@ function drawAcudientes(){
       return toast('No se pudo crear la cuenta: ' + (e.code || e.message), true);
     }
     const nuevo = { id: nuevoUid, code, name: nombre.trim(), role:'familia',
-                    subject:'', studentIds:(a.studentIds||[]).slice(),
+                    studentIds:(a.studentIds||[]).slice(),
                     hijos: hijosDe(a.studentIds) };
+    try{
+      await crearFicha(nuevo);
+    }catch(e){
+      console.error(e);
+      return confirmDialog('La cuenta quedó a medias',
+        `Se creó el acceso de ${code} pero su ficha no se pudo guardar.\n\n${e.code || e.message}\n\nBorra ${emailDe(code)} en Firebase → Authentication → Users y vuelve a intentarlo.`,
+        'Entendido', true);
+    }
     DB.users.push(nuevo);
     a.userId = nuevo.id;
     a.nombre = nombre.trim();
@@ -1886,6 +1918,8 @@ function drawAcudientes(){
     if(!a) return;
     if(!confirm(`¿Retirar la cédula ${a.cedula}${a.nombre ? ' · ' + a.nombre : ''}?\n\nSe borra la cédula de la lista, su cuenta, su contraseña y sus mensajes. Esto no se puede deshacer.`)) return;
     if(a.userId){
+      const cta = DB.users.find(u=>u.id===a.userId);
+      if(cta) DB.limpiar = [...new Set([...(DB.limpiar||[]), emailDe(cta.code)])];
       await borrarMensajesDe(a.userId);
       DB.users = DB.users.filter(u=>u.id!==a.userId);
     }
@@ -1938,6 +1972,7 @@ function drawUsers(){
       'Eliminar');
     if(!ok) return;
     DB.users = DB.users.filter(x=>x.id!==u.id);
+    DB.limpiar = [...new Set([...(DB.limpiar||[]), emailDe(u.code)])];
     const ac = DB.acudientes.find(a=>a.userId===u.id);
     if(ac) ac.userId = null;          // la cédula sigue autorizada, puede volver a registrarse
     await borrarMensajesDe(u.id);
@@ -1962,13 +1997,22 @@ async function addUser(){
   }catch(e){
     return toast('No se pudo crear la cuenta: ' + (e.code || e.message), true);
   }
-  DB.users.push({
+  const nuevo = {
     id: nuevoUid, code, name, role,
     subjects: role === 'profesor' ? [...document.querySelectorAll('.uMat:checked')].map(i=>i.value) : [],
     director: role === 'profesor' ? $('uDirector').value : '',
     cursos: [],
     studentIds, hijos: hijosDe(studentIds),
-  });
+  };
+  try{
+    await crearFicha(nuevo);
+  }catch(e){
+    console.error(e);
+    return confirmDialog('La cuenta quedó a medias',
+      `Se creó el acceso de ${code} pero su ficha no se pudo guardar.\n\n${e.code || e.message}\n\nBorra ${emailDe(code)} en Firebase → Authentication → Users y vuelve a intentarlo.`,
+      'Entendido', true);
+  }
+  DB.users.push(nuevo);
   await save();
   renderAdmin($('main'));
   await confirmDialog('Cuenta creada',
