@@ -125,6 +125,11 @@
   .sub-tab{font:inherit; font-size:13px; padding:8px 15px; border-radius:20px; cursor:pointer;
     border:1px solid var(--line); background:var(--paper); color:var(--text-soft);}
   .sub-tab.on{background:var(--ink); color:var(--paper); border-color:var(--ink); font-weight:600;}
+  table.horario td{padding:5px; text-align:center;}
+  table.horario td.hora{font-weight:700; background:var(--paper-dark); white-space:nowrap;}
+  table.horario td.ocupada{background:#eef3ee;}
+  table.horario select{width:100%; min-width:78px; font:inherit; font-size:12.5px; padding:6px 4px;
+    border:1px solid var(--line); border-radius:6px; background:var(--paper);}
   .chips-check{display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px; max-height:210px; overflow:auto;
     padding:10px; border:1px solid var(--line); border-radius:8px;}
   .chips-check label{display:flex; align-items:center; gap:5px; font-size:12.5px;
@@ -436,6 +441,7 @@ async function cargarTodo(uid){
   const base = {
     subjects: (config.subjects && config.subjects.length) ? config.subjects : SUBJECTS.slice(),
     terms: config.terms || TERMS.slice(),
+    estadoTerms: config.estadoTerms || {},
     limpiar: config.limpiar || [],
     students: [], marks: {}, obs: {}, users: [], acudientes: [], reports: [], messages: []
   };
@@ -485,7 +491,7 @@ async function cargarTodo(uid){
 
 function guardarEspejo(d){
   espejo = {
-    config: { subjects: d.subjects, terms: d.terms, limpiar: d.limpiar||[] },
+    config: { subjects: d.subjects, terms: d.terms, estadoTerms: d.estadoTerms||{}, limpiar: d.limpiar||[] },
     students: copia(d.students), users: copia(d.users),
     acudientes: copia(d.acudientes), reports: copia(d.reports),
     marks: copia(d.marks), obs: copia(d.obs),
@@ -499,7 +505,8 @@ async function save(){
   const tareas = [];
 
   if(isCoord()){
-    const cfg = {subjects:DB.subjects, terms:DB.terms, limpiar:DB.limpiar||[]};
+    const cfg = {subjects:DB.subjects, terms:DB.terms,
+                 estadoTerms:DB.estadoTerms||{}, limpiar:DB.limpiar||[]};
     if(!igual(espejo.config, cfg)) tareas.push(setDoc(DOC_CONFIG, cfg));
     if(!igual(espejo.students, DB.students))
       tareas.push(setDoc(DOC_NOMINA, {students: DB.students}));
@@ -578,7 +585,7 @@ async function guardarDefinitivas(curso, materia, term, cambios){
     const lote = writeBatch(nube);
     cambios.forEach(({st, valor, obsTxt})=>{
       lote.set(doc(COL_NOTAS, st.id), {
-        curso,
+        curso, term,
         marks: { [term]: { [materia]: valor === null ? deleteField() : valor } },
         obs:   { [term]: { [materia]: obsTxt || deleteField() } }
       }, { merge:true });
@@ -591,6 +598,16 @@ async function guardarDefinitivas(curso, materia, term, cambios){
     console.error('No se pudieron publicar las notas:', e);
     toast('El servidor rechazó las notas: ' + (e.code || e.message), true);
     return false;
+  }
+}
+
+async function guardarMiHorarioClases(horarioClases){
+  try{
+    await setDoc(doc(COL_USUARIOS, currentUser.id), { horarioClases }, { merge:true });
+    toast('Horario guardado');
+  }catch(e){
+    console.error('El servidor rechazó el horario:', e);
+    toast('No se pudo guardar: ' + (e.code || e.message), true);
   }
 }
 
@@ -816,6 +833,7 @@ const cursosVisibles = () => {
   if(currentUser.director) set.add(currentUser.director);
   return COURSES.filter(c => set.has(c));
 };
+const periodoAbierto = t => (DB.estadoTerms || {})[t] === 'abierto';
 const nombreRol = r => r === 'coordinador' ? 'Coordinación' : r === 'profesor' ? 'Profesor' : 'Familia';
 const myStudents = () => (currentUser.studentIds||[]).map(studentById).filter(Boolean);
 
@@ -1253,77 +1271,69 @@ async function sendMessage(){
 /* =====================================================================
    CURSOS · planilla del curso con las 14 materias
    ===================================================================== */
-let cursoSel = null, cursoTerm = TERM_ACTUAL;
+const DIAS_CLASE = ['Lunes','Martes','Miércoles','Jueves','Viernes'];
+const HORAS_CLASE = ['1ª','2ª','3ª','4ª','5ª','6ª'];
+
 function renderCursos(main){
   if(!isProfe()) return;
-  if(!cursoSel) cursoSel = defaultCourse();
+  const cursos = [...new Set([...(currentUser.cursos||[]), currentUser.director].filter(Boolean))];
+  const horario = currentUser.horarioClases || {};
+
   main.innerHTML = `
-    <h2>Cursos</h2>
-    <p class="subtitle">Elige un curso (101 a 1106) y verás su planilla: cada estudiante con la nota de las ${DB.subjects.length} materias.</p>
+    <h2>Mi horario de clases</h2>
+    <p class="subtitle">Arma tu semana: en cada hora elige el curso que te toca. Solo aparecen los cursos que marcaste en “Mi cuenta”.</p>
+    ${cursos.length ? `
     <div class="card">
-      <div class="grid">
-        <div class="form-row" style="margin:0"><label for="cSel">Curso</label>
-          <select class="curso" id="cSel">${courseOptions(cursoSel)}</select></div>
-        <div class="form-row" style="margin:0"><label for="cTerm">Periodo</label>
-          <select id="cTerm">${DB.terms.map(t=>`<option${t===cursoTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
+      <div class="table-wrap"><table class="horario">
+        <thead><tr><th>Hora</th>${DIAS_CLASE.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+        <tbody>${HORAS_CLASE.map((h,hi)=>`
+          <tr><td class="hora">${h}</td>
+          ${DIAS_CLASE.map((d,di)=>{
+            const k = di + '-' + hi;
+            const val = horario[k] || '';
+            return `<td class="${val?'ocupada':''}">
+              <select class="celda" data-k="${k}">
+                <option value="">—</option>
+                ${cursos.map(c=>`<option value="${c}"${c===val?' selected':''}>${c}</option>`).join('')}
+              </select></td>`;
+          }).join('')}</tr>`).join('')}
+        </tbody>
+      </table></div>
+      <div class="sticky-save">
+        <button class="btn" id="btnSaveHorarioClases">Guardar mi horario</button>
+        <span class="hint" style="margin:0">Se guarda en tu cuenta: lo ves desde cualquier dispositivo.</span>
       </div>
     </div>
-    <div id="cursoStats"></div>
-    <div class="card" id="cursoPanel"></div>`;
-  $('cSel').onchange = ()=>{ cursoSel = $('cSel').value; drawCursoPanel(); };
-  $('cTerm').onchange = ()=>{ cursoTerm = $('cTerm').value; drawCursoPanel(); };
-  drawCursoPanel();
-}
-function drawCursoPanel(){
-  const list = studentsIn(cursoSel);
-  const prom = avgCourse(cursoSel, cursoTerm);
-  const perdiendo = list.filter(s=>{ const a = avgOf(s.id, cursoTerm); return a !== null && a < 3; }).length;
 
-  $('cursoStats').innerHTML = `
-    <div class="stat-strip">
-      <div class="stat"><div class="k">Estudiantes</div><div class="v">${list.length}</div></div>
-      <div class="stat"><div class="k">Promedio del curso</div><div class="v ${prom!==null&&prom<3?'bad':''}">${fmt(prom)}</div></div>
-      <div class="stat"><div class="k">Con promedio bajo 3.0</div><div class="v ${perdiendo?'bad':''}">${perdiendo}</div></div>
-      <div class="stat"><div class="k">Materias</div><div class="v">${DB.subjects.length}</div></div>
-    </div>`;
+    <div class="card">
+      <div class="card-head"><h3>Resumen por curso</h3></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Curso</th><th>Horas por semana</th><th>Estudiantes</th><th>Rol</th></tr></thead>
+        <tbody>${cursos.map(c=>{
+          const horas = Object.values(horario).filter(v=>v===c).length;
+          return `<tr><td><b>${esc(c)}</b></td><td>${horas}</td><td>${courseCount(c)}</td>
+            <td>${c===currentUser.director ? '<span class="tag familia">Director de curso</span>' : (currentUser.subjects||[]).join(', ') || '—'}</td></tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>`
+    : '<div class="card"><p class="empty">Todavía no marcaste tus cursos. Ve a “Mi cuenta” → Mis cursos.</p></div>'}`;
 
-  const panel = $('cursoPanel');
-  if(!list.length){
-    panel.innerHTML = `<div class="card-head"><h3>Curso <span class="curso-chip">${esc(cursoSel)}</span></h3></div>
-      <p class="empty">Este curso no tiene estudiantes matriculados. Agrégalos desde Administración.</p>`;
-    return;
+  if($('btnSaveHorarioClases')){
+    $('btnSaveHorarioClases').onclick = async ()=>{
+      const nuevoH = {};
+      document.querySelectorAll('.celda').forEach(sel=>{ if(sel.value) nuevoH[sel.dataset.k] = sel.value; });
+      currentUser.horarioClases = nuevoH;
+      const yo4 = DB.users.find(u=>u.id===currentUser.id);
+      if(yo4) yo4.horarioClases = nuevoH;
+      await guardarMiHorarioClases(nuevoH);
+      renderCursos(main);
+    };
+    document.querySelectorAll('.celda').forEach(sel=>{
+      sel.onchange = ()=>{ sel.closest('td').classList.toggle('ocupada', !!sel.value); };
+    });
   }
-  panel.innerHTML = `
-    <div class="card-head">
-      <h3>Planilla del curso <span class="curso-chip">${esc(cursoSel)}</span></h3>
-      <span class="tag">Periodo ${esc(cursoTerm)}</span>
-    </div>
-    <div class="table-wrap"><table class="matrix">
-      <thead><tr>
-        <th class="nm">Estudiante</th>
-        ${DB.subjects.map(m=>`<th title="${esc(m)}">${esc(abbr(m))}</th>`).join('')}
-        <th>Prom.</th><th></th>
-      </tr></thead>
-      <tbody>${list.map(s=>{
-        const a = avgOf(s.id, cursoTerm);
-        return `<tr>
-          <td class="nm">${esc(s.name)}</td>
-          ${DB.subjects.map(m=>{
-            const v = markOf(s.id, cursoTerm, m);
-            return `<td><span class="n ${v===null?'none':(v<3?'bad':'')}">${v===null?'—':v.toFixed(1)}</span></td>`;
-          }).join('')}
-          <td><span class="prom ${a!==null&&a<3?'bad':''}">${fmt(a)}</span></td>
-          <td><button class="btn ghost tiny" data-edit="${s.id}">Editar</button></td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table></div>
-    <p class="hint">Pasa el cursor por los títulos abreviados para ver el nombre completo de la materia. Desliza la tabla hacia el lado para ver todas.</p>`;
-
-  panel.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>{
-    notaCurso = cursoSel; notaStudent = b.dataset.edit; notaTerm = cursoTerm;
-    showTab('notas');
-  });
 }
+
 
 /* =====================================================================
    NOTAS · boletín por estudiante
@@ -1374,6 +1384,7 @@ function panelMateria(){
   const materias = currentUser.subjects || [];
   const cursos = currentUser.cursos || [];
   const lista = studentsIn(notaCurso);
+  const abierto = periodoAbierto(notaTerm);
 
   $('notaPanel').innerHTML = `
     <p class="subtitle">Elige tu materia y el curso: aparece el salón completo para poner la definitiva de una sola pasada.</p>
@@ -1387,10 +1398,11 @@ function panelMateria(){
           <select id="nTerm">${DB.terms.map(t=>`<option${t===notaTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
       </div>
     </div>
+    ${abierto ? '' : `<div class="locked-banner">🔒 El periodo ${esc(notaTerm)} está cerrado. Coordinación debe abrirlo para poder calificar.</div>`}
     <div class="card">
       <div class="card-head">
         <h3>${esc(notaMateria)} <span class="curso-chip">${esc(notaCurso)}</span></h3>
-        <span class="tag">Periodo ${esc(notaTerm)}</span>
+        <span class="tag">${abierto ? 'Abierto' : 'Cerrado'} · ${esc(notaTerm)}</span>
       </div>
       ${lista.length ? `
       <div class="table-wrap"><table class="boletin">
@@ -1400,15 +1412,17 @@ function panelMateria(){
           return `<tr>
             <td>${esc(st.name)}</td>
             <td><input class="nota ${v!==null&&v<3?'bad':''}" data-sid="${st.id}" type="number"
-                   min="1" max="5" step="0.1" value="${v===null?'':v.toFixed(1)}" placeholder="—"></td>
-            <td><input class="obs" data-obs="${st.id}" type="text"
+                   min="1" max="5" step="0.1" value="${v===null?'':v.toFixed(1)}" placeholder="—" ${abierto?'':'disabled'}></td>
+            <td><input class="obs" data-obs="${st.id}" type="text" ${abierto?'':'disabled'}
                    value="${esc(obsOf(st.id, notaTerm, notaMateria))}" placeholder="Comentario para la familia"></td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>
       <div class="sticky-save">
-        <button class="btn" id="btnPublicar">Publicar definitivas</button>
-        <span class="hint" style="margin:0">Se guardan solo las casillas que cambiaste. En blanco = sin calificar.</span>
+        <button class="btn" id="btnPublicar" ${abierto?'':'disabled'}>Publicar definitivas</button>
+        <span class="hint" style="margin:0">${abierto
+          ? 'Se guardan solo las casillas que cambiaste. En blanco = sin calificar.'
+          : 'Periodo cerrado: no se pueden agregar ni quitar notas.'}</span>
       </div>` : '<p class="empty">Este curso no tiene estudiantes matriculados.</p>'}
     </div>`;
 
@@ -1422,6 +1436,7 @@ function panelMateria(){
 }
 
 async function publicarDefinitivas(){
+  if(!periodoAbierto(notaTerm)) return toast('El periodo está cerrado.', true);
   const cambios = [];
   let invalidas = 0;
   studentsIn(notaCurso).forEach(st=>{
@@ -1706,6 +1721,18 @@ function renderAdmin(main){
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-head"><h3>Periodos académicos</h3></div>
+      <p class="subtitle" style="margin-bottom:16px">Mientras un periodo está cerrado, ningún profesor puede poner ni quitar notas de ese periodo. Ábrelo cuando empiece y ciérralo cuando termine.</p>
+      <div class="table-wrap"><table><thead><tr><th>Periodo</th><th>Estado</th><th></th></tr></thead>
+      <tbody>${DB.terms.map(t=>{
+        const ab = (DB.estadoTerms||{})[t] === 'abierto';
+        return `<tr><td><b>${esc(t)}</b></td>
+          <td>${ab ? '<span class="tag familia">Abierto</span>' : '<span class="tag">Cerrado</span>'}</td>
+          <td style="text-align:right"><button class="btn ${ab?'ghost':''} tiny" data-per="${esc(t)}">${ab?'Cerrar periodo':'Abrir periodo'}</button></td></tr>`;
+      }).join('')}</tbody></table></div>
+    </div>
+
     <div class="card zona-riesgo">
       <div class="card-head"><h3>Zona de riesgo</h3></div>
       ${(DB.limpiar||[]).length ? `
@@ -1778,6 +1805,15 @@ function renderAdmin(main){
   $('acQuery').oninput = ()=>{ acQuery = $('acQuery').value; drawAcudientes(); };
   $('uQuery').oninput = ()=>{ uQuery = $('uQuery').value; drawUsers(); };
   $('btnAddAcudiente').onclick = addAcudiente;
+  document.querySelectorAll('[data-per]').forEach(b=>b.onclick = async ()=>{
+    const t = b.dataset.per;
+    DB.estadoTerms = DB.estadoTerms || {};
+    DB.estadoTerms[t] = DB.estadoTerms[t] === 'abierto' ? 'cerrado' : 'abierto';
+    await save();
+    toast(DB.estadoTerms[t] === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
+    renderAdmin($('main'));
+  });
+
   $('btnWipe').onclick = reiniciarPortal;
   document.querySelectorAll('[data-limp]').forEach(b=>b.onclick = async ()=>{
     DB.limpiar = (DB.limpiar||[]).filter(m => m !== b.dataset.limp);
