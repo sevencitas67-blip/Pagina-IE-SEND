@@ -346,7 +346,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword }
+import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword, deleteUser }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot,
          collection, addDoc, query, orderBy, where, getDocs }
@@ -377,11 +377,19 @@ const authAlta = getAuth(appAlta);
 
 /* El código de acceso se convierte en un correo interno. El usuario nunca lo ve. */
 const emailDe = code => String(code||'').trim().toLowerCase().replace(/\s+/g,'') + '@ie-send.local';
+/* El acceso se crea, pero queda a prueba: si la ficha no se guarda, se deshace.
+   Así nunca quedan correos sueltos en Authentication. */
 async function crearCuentaAuth(code, pass){
   const cred = await createUserWithEmailAndPassword(authAlta, emailDe(code), pass);
-  const nuevoUid = cred.user.uid;
-  await signOut(authAlta);
-  return nuevoUid;                   // el usuario del portal usa este mismo id
+  return cred.user.uid;              // sigue con sesión en la app secundaria
+}
+async function confirmarCuentaAuth(){
+  try{ await signOut(authAlta); }catch(e){}
+}
+async function deshacerCuentaAuth(){
+  try{ if(authAlta.currentUser) await deleteUser(authAlta.currentUser); }
+  catch(e){ console.error('No se pudo deshacer el acceso:', e); }
+  try{ await signOut(authAlta); }catch(e){}
 }
 /* =====================================================================
    Los datos ya no viven en un solo bloque. Cada cosa tiene su colección,
@@ -1890,11 +1898,13 @@ function drawAcudientes(){
     try{
       await crearFicha(nuevo);
     }catch(e){
-      console.error(e);
-      return confirmDialog('La cuenta quedó a medias',
-        `Se creó el acceso de ${code} pero su ficha no se pudo guardar.\n\n${e.code || e.message}\n\nBorra ${emailDe(code)} en Firebase → Authentication → Users y vuelve a intentarlo.`,
+      console.error('Falló la ficha:', e);
+      await deshacerCuentaAuth();
+      return confirmDialog('No se pudo crear la cuenta',
+        `El servidor rechazó guardar la ficha, así que deshice el acceso: no quedó ningún correo suelto.\n\nMotivo exacto:\n${e.code || e.message}\n\nSi dice permission-denied, faltan las reglas nuevas de Firestore.`,
         'Entendido', true);
     }
+    await confirmarCuentaAuth();
     DB.users.push(nuevo);
     a.userId = nuevo.id;
     a.nombre = nombre.trim();
@@ -2006,12 +2016,14 @@ async function addUser(){
   };
   try{
     await crearFicha(nuevo);
-  }catch(e){
-    console.error(e);
-    return confirmDialog('La cuenta quedó a medias',
-      `Se creó el acceso de ${code} pero su ficha no se pudo guardar.\n\n${e.code || e.message}\n\nBorra ${emailDe(code)} en Firebase → Authentication → Users y vuelve a intentarlo.`,
+    }catch(e){
+    console.error('Falló la ficha:', e);
+    await deshacerCuentaAuth();
+    return confirmDialog('No se pudo crear la cuenta',
+      `El servidor rechazó guardar la ficha, así que deshice el acceso: no quedó ningún correo suelto.\n\nMotivo exacto:\n${e.code || e.message}\n\nSi dice permission-denied, faltan las reglas nuevas de Firestore.`,
       'Entendido', true);
   }
+  await confirmarCuentaAuth();
   DB.users.push(nuevo);
   await save();
   renderAdmin($('main'));
