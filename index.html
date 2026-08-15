@@ -121,6 +121,10 @@
     margin:22px 0 8px; font-weight:700;}
   .sub-head span{font-weight:400; text-transform:none; letter-spacing:0;}
   .zona-riesgo{border-color:#e6cdc8; background:#fdf7f6;}
+  .sub-tabs{display:flex; gap:8px; margin:0 0 18px; flex-wrap:wrap;}
+  .sub-tab{font:inherit; font-size:13px; padding:8px 15px; border-radius:20px; cursor:pointer;
+    border:1px solid var(--line); background:var(--paper); color:var(--text-soft);}
+  .sub-tab.on{background:var(--ink); color:var(--paper); border-color:var(--ink); font-weight:600;}
   .chips-check{display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px; max-height:210px; overflow:auto;
     padding:10px; border:1px solid var(--line); border-radius:8px;}
   .chips-check label{display:flex; align-items:center; gap:5px; font-size:12.5px;
@@ -348,7 +352,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword, deleteUser }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot,
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, writeBatch, deleteField,
          collection, addDoc, query, orderBy, where, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -461,8 +465,13 @@ async function cargarTodo(uid){
     base.reports = r.docs.map(d => ({ id:d.id, ...d.data() }));
 
     if(yo.role === 'profesor'){
-      const n = await getDocs(COL_NOTAS);
-      n.docs.forEach(d => { base.marks[d.id] = d.data().marks || {}; base.obs[d.id] = d.data().obs || {}; });
+      // Solo las notas de los cursos que tiene asignados, en tandas de 10.
+      const mios = [...new Set([...(yo.cursos||[]), yo.director].filter(Boolean))];
+      for(let i = 0; i < mios.length; i += 10){
+        const tanda = mios.slice(i, i + 10);
+        const n = await getDocs(query(COL_NOTAS, where('curso','in', tanda)));
+        n.docs.forEach(d => { base.marks[d.id] = d.data().marks || {}; base.obs[d.id] = d.data().obs || {}; });
+      }
     }
     if(yo.role === 'coordinador'){
       const a = await getDocs(COL_ACUDIENTES);
@@ -516,13 +525,8 @@ async function save(){
   }
 
   if(isProfe()){
-    for(const sid of Object.keys(DB.marks)){
-      if(!igual((espejo.marks||{})[sid], DB.marks[sid]) || !igual((espejo.obs||{})[sid], DB.obs[sid]))
-        tareas.push(setDoc(doc(COL_NOTAS, sid), {
-          curso: studentCourse(sid),          // las reglas lo usan para saber si es tu curso
-          marks: DB.marks[sid]||{}, obs: DB.obs[sid]||{}
-        }));
-    }
+    // Las notas NO se guardan aquí: van por lote en guardarDefinitivas(),
+    // que escribe casilla por casilla y no pisa lo que publicó otro profesor.
     const perfil = { name: currentUser.name, subjects: currentUser.subjects || [], horario: currentUser.horario || null };
     if(!igual(espejo.perfil, perfil)){
       tareas.push(setDoc(doc(COL_DIRECTORIO, currentUser.id), perfil));
@@ -567,6 +571,29 @@ async function guardarMisCursos(cursos){
 
 /* Crea la ficha del usuario y comprueba que quedó. Si el servidor la rechaza,
    avisa aquí mismo en vez de dejar una cuenta que no puede entrar. */
+/* Publica una materia de un curso en un solo envío.
+   Escribe solo esa casilla de cada estudiante: nunca toca las notas de otro profesor. */
+async function guardarDefinitivas(curso, materia, term, cambios){
+  try{
+    const lote = writeBatch(nube);
+    cambios.forEach(({st, valor, obsTxt})=>{
+      lote.set(doc(COL_NOTAS, st.id), {
+        curso,
+        marks: { [term]: { [materia]: valor === null ? deleteField() : valor } },
+        obs:   { [term]: { [materia]: obsTxt || deleteField() } }
+      }, { merge:true });
+    });
+    await lote.commit();
+    storageOk = true;
+    return true;
+  }catch(e){
+    storageOk = false;
+    console.error('No se pudieron publicar las notas:', e);
+    toast('El servidor rechazó las notas: ' + (e.code || e.message), true);
+    return false;
+  }
+}
+
 async function crearFicha(u){
   const { id, horario, ...datos } = u;
   await setDoc(doc(COL_USUARIOS, id), datos);
@@ -1308,122 +1335,156 @@ function renderNotas(main){
   return isProfe() ? renderNotasProfe(main) : renderNotasFamilia(main);
 }
 
+let notaVista = 'materias';   // 'materias' | 'direccion'
+let notaMateria = null;
+
 function renderNotasProfe(main){
-  if(!notaCurso) notaCurso = defaultCourse();
-  const enCurso = studentsIn(notaCurso);
-  if(!notaStudent || !enCurso.some(s=>s.id===notaStudent)) notaStudent = enCurso.length ? enCurso[0].id : null;
+  const materias = currentUser.subjects || [];
+  const cursos = currentUser.cursos || [];
+  const dirige = currentUser.director || '';
+
+  if(!materias.length && !dirige){
+    main.innerHTML = `<h2>Notas</h2>
+      <div class="card"><p class="empty">Coordinación todavía no te asignó materias.</p></div>`;
+    return;
+  }
+  if(!cursos.length && !dirige){
+    main.innerHTML = `<h2>Notas</h2>
+      <div class="card"><p class="empty">Todavía no marcaste tus cursos. Ve a “Mi cuenta” → Mis cursos.</p></div>`;
+    return;
+  }
+  if(!dirige) notaVista = 'materias';
+  if(!notaMateria || !materias.includes(notaMateria)) notaMateria = materias[0] || null;
+  if(!notaCurso || !cursos.includes(notaCurso)) notaCurso = cursos[0] || dirige;
 
   main.innerHTML = `
     <h2>Notas</h2>
-    <p class="subtitle">Elige curso y estudiante: aparecen las ${DB.subjects.length} materias con su nota y su observación, listas para editar.</p>
+    <div class="sub-tabs">
+      ${materias.length ? `<button class="sub-tab ${notaVista==='materias'?'on':''}" data-v="materias">Mis materias</button>` : ''}
+      ${dirige ? `<button class="sub-tab ${notaVista==='direccion'?'on':''}" data-v="direccion">Dirección de curso ${esc(dirige)}</button>` : ''}
+    </div>
+    <div id="notaPanel"></div>`;
+
+  main.querySelectorAll('.sub-tab').forEach(b=>b.onclick = ()=>{ notaVista = b.dataset.v; renderNotasProfe(main); });
+  if(notaVista === 'direccion') panelDireccion(); else panelMateria();
+}
+
+/* ---------- Publicar definitivas: una materia, un curso, todo el salón ---------- */
+function panelMateria(){
+  const materias = currentUser.subjects || [];
+  const cursos = currentUser.cursos || [];
+  const lista = studentsIn(notaCurso);
+
+  $('notaPanel').innerHTML = `
+    <p class="subtitle">Elige tu materia y el curso: aparece el salón completo para poner la definitiva de una sola pasada.</p>
     <div class="card">
       <div class="grid">
-        <div class="form-row" style="margin:0"><label for="nCurso">Curso</label>
-          <select class="curso" id="nCurso">${courseOptions(notaCurso)}</select></div>
-        <div class="form-row" style="margin:0"><label for="nStudent">Estudiante</label>
-          <select id="nStudent"></select></div>
+        <div class="form-row" style="margin:0"><label for="nMat">Materia</label>
+          <select id="nMat">${materias.map(m=>`<option${m===notaMateria?' selected':''}>${esc(m)}</option>`).join('')}</select></div>
+        <div class="form-row" style="margin:0"><label for="nCur">Curso</label>
+          <select id="nCur">${cursos.map(c=>`<option value="${c}"${c===notaCurso?' selected':''}>${c} · ${courseCount(c)} est.</option>`).join('')}</select></div>
         <div class="form-row" style="margin:0"><label for="nTerm">Periodo</label>
           <select id="nTerm">${DB.terms.map(t=>`<option${t===notaTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
       </div>
     </div>
-    <div id="notaPanel"></div>`;
-
-  fillStudents($('nStudent'), notaCurso, notaStudent);
-  $('nCurso').onchange = ()=>{
-    notaCurso = $('nCurso').value;
-    fillStudents($('nStudent'), notaCurso);
-    notaStudent = $('nStudent').value || null;
-    drawBoletin();
-  };
-  $('nStudent').onchange = ()=>{ notaStudent = $('nStudent').value || null; drawBoletin(); };
-  $('nTerm').onchange = ()=>{ notaTerm = $('nTerm').value; drawBoletin(); };
-  drawBoletin();
-}
-
-function drawBoletin(){
-  const panel = $('notaPanel');
-  if(!notaStudent){
-    panel.innerHTML = `<div class="card"><p class="empty">Este curso no tiene estudiantes. Elige otro curso o matricula uno desde Administración.</p></div>`;
-    return;
-  }
-  const s = studentById(notaStudent);
-  const a = avgOf(s.id, notaTerm);
-  const materias = isProfe() ? misMaterias(s.curso) : DB.subjects.slice();
-  const perdidas = materias.filter(m=>{ const v = markOf(s.id, notaTerm, m); return v !== null && v < 3; }).length;
-  const sinNota = materias.filter(m=>markOf(s.id, notaTerm, m) === null).length;
-
-  panel.innerHTML = `
-    <div class="stat-strip">
-      <div class="stat"><div class="k">Promedio ${esc(notaTerm)}</div><div class="v ${a!==null&&a<3?'bad':''}">${fmt(a)}</div></div>
-      <div class="stat"><div class="k">Materias perdidas</div><div class="v ${perdidas?'bad':''}">${perdidas}</div></div>
-      <div class="stat"><div class="k">Sin calificar</div><div class="v">${sinNota}</div></div>
-    </div>
     <div class="card">
       <div class="card-head">
-        <h3>${esc(s.name)} <span class="curso-chip">${esc(s.curso)}</span></h3>
+        <h3>${esc(notaMateria)} <span class="curso-chip">${esc(notaCurso)}</span></h3>
         <span class="tag">Periodo ${esc(notaTerm)}</span>
       </div>
-      ${isProfe() && !dirijoCurso(s.curso) ? `<p class="hint">Ves solo las materias que dictas. Como director de curso verías todas.</p>` : ''}
+      ${lista.length ? `
       <div class="table-wrap"><table class="boletin">
-        <thead><tr><th>Materia</th><th>Nota (1.0 – 5.0)</th><th>Observación</th></tr></thead>
-        <tbody>${materias.map((m)=>{
-          const i = DB.subjects.indexOf(m);
-          const v = markOf(s.id, notaTerm, m);
+        <thead><tr><th>Estudiante</th><th>Definitiva (1.0 – 5.0)</th><th>Observación</th></tr></thead>
+        <tbody>${lista.map(st=>{
+          const v = markOf(st.id, notaTerm, notaMateria);
           return `<tr>
-            <td>${esc(m)}</td>
-            <td><input class="nota ${v!==null&&v<3?'bad':''}" data-m="${i}" type="number" min="1" max="5" step="0.1"
-                   value="${v===null?'':v.toFixed(1)}" placeholder="—"></td>
-            <td><input class="obs" data-o="${i}" type="text" value="${esc(obsOf(s.id, notaTerm, m))}" placeholder="Comentario para la familia"></td>
+            <td>${esc(st.name)}</td>
+            <td><input class="nota ${v!==null&&v<3?'bad':''}" data-sid="${st.id}" type="number"
+                   min="1" max="5" step="0.1" value="${v===null?'':v.toFixed(1)}" placeholder="—"></td>
+            <td><input class="obs" data-obs="${st.id}" type="text"
+                   value="${esc(obsOf(st.id, notaTerm, notaMateria))}" placeholder="Comentario para la familia"></td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>
       <div class="sticky-save">
-        <button class="btn" id="btnSaveBoletin">Guardar boletín</button>
-        <button class="btn ghost" id="btnClearBoletin">Vaciar notas del periodo</button>
-        <span class="hint" style="margin:0">Deja una casilla en blanco para dejar la materia sin calificar.</span>
-      </div>
+        <button class="btn" id="btnPublicar">Publicar definitivas</button>
+        <span class="hint" style="margin:0">Se guardan solo las casillas que cambiaste. En blanco = sin calificar.</span>
+      </div>` : '<p class="empty">Este curso no tiene estudiantes matriculados.</p>'}
     </div>`;
 
-  panel.querySelectorAll('input.nota').forEach(inp=>{
-    inp.oninput = ()=>{
-      const v = parseFloat(inp.value);
-      inp.classList.toggle('bad', !isNaN(v) && v < 3);
-    };
+  $('nMat').onchange = ()=>{ notaMateria = $('nMat').value; panelMateria(); };
+  $('nCur').onchange = ()=>{ notaCurso = $('nCur').value; panelMateria(); };
+  $('nTerm').onchange = ()=>{ notaTerm = $('nTerm').value; panelMateria(); };
+  $('notaPanel').querySelectorAll('input.nota').forEach(inp=>{
+    inp.oninput = ()=>{ const v = parseFloat(inp.value); inp.classList.toggle('bad', !isNaN(v) && v < 3); };
   });
-  $('btnSaveBoletin').onclick = saveBoletin;
-  $('btnClearBoletin').onclick = async ()=>{
-    const ok = await confirmDialog('Vaciar notas',
-      `Se borrarán las ${DB.subjects.length} notas de ${s.name} en el periodo ${notaTerm}.`, 'Vaciar');
-    if(!ok) return;
-    if(DB.marks[s.id]) delete DB.marks[s.id][notaTerm];
-    if(DB.obs[s.id]) delete DB.obs[s.id][notaTerm];
-    await save(); toast('Notas del periodo borradas'); drawBoletin();
-  };
+  if($('btnPublicar')) $('btnPublicar').onclick = publicarDefinitivas;
 }
 
-async function saveBoletin(){
-  const s = studentById(notaStudent);
+async function publicarDefinitivas(){
+  const cambios = [];
   let invalidas = 0;
-  DB.subjects.forEach((m,i)=>{
-    const inp = document.querySelector(`input.nota[data-m="${i}"]`);
-    const obs = document.querySelector(`input.obs[data-o="${i}"]`);
+  studentsIn(notaCurso).forEach(st=>{
+    const inp = document.querySelector(`input.nota[data-sid="${st.id}"]`);
+    const obsI = document.querySelector(`input.obs[data-obs="${st.id}"]`);
+    if(!inp) return;
     const raw = inp.value.trim();
-    if(raw === ''){ setMark(s.id, notaTerm, m, null); }
-    else{
+    let valor = null;
+    if(raw !== ''){
       const v = parseFloat(raw);
       if(isNaN(v) || v < 1 || v > 5){ invalidas++; return; }
-      setMark(s.id, notaTerm, m, Math.round(v*10)/10);
+      valor = Math.round(v*10)/10;
     }
-    setObs(s.id, notaTerm, m, obs.value.trim());
+    const obsTxt = obsI ? obsI.value.trim() : '';
+    if(valor !== markOf(st.id, notaTerm, notaMateria) || obsTxt !== obsOf(st.id, notaTerm, notaMateria))
+      cambios.push({ st, valor, obsTxt });
   });
-  await save();
-  if(invalidas) toast(`${invalidas} nota(s) fuera del rango 1.0–5.0 no se guardaron.`, true);
-  else toast('Boletín guardado');
-  drawBoletin();
+
+  if(!cambios.length){
+    return toast(invalidas ? `${invalidas} nota(s) fuera del rango 1.0–5.0.` : 'No hay cambios que publicar.', !!invalidas);
+  }
+  const ok = await guardarDefinitivas(notaCurso, notaMateria, notaTerm, cambios);
+  if(!ok) return;
+  cambios.forEach(c=>{
+    setMark(c.st.id, notaTerm, notaMateria, c.valor);
+    setObs(c.st.id, notaTerm, notaMateria, c.obsTxt);
+  });
+  toast(invalidas ? `${cambios.length} publicadas · ${invalidas} fuera de rango` : `${cambios.length} nota(s) publicadas`);
+  panelMateria();
 }
 
-/* --------- Notas para la familia (solo lectura) --------- */
-let famTerm = TERM_ACTUAL, famStudent = null;
+/* ---------- Dirección de curso: el panorama completo ---------- */
+function panelDireccion(){
+  const curso = currentUser.director;
+  const lista = studentsIn(curso);
+  const mats = DB.subjects;
+
+  $('notaPanel').innerHTML = `
+    <p class="subtitle">Todas las materias de tu curso, tal como las publicaron los demás profesores. Aquí solo consultas: cada quien edita la suya.</p>
+    <div class="card">
+      <div class="form-row" style="margin:0; max-width:260px"><label for="dTerm">Periodo</label>
+        <select id="dTerm">${DB.terms.map(t=>`<option${t===notaTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Curso ${esc(curso)}</h3><span class="tag">${lista.length} estudiantes</span></div>
+      ${lista.length ? `
+      <div class="table-wrap"><table class="matrix">
+        <thead><tr><th class="nm">Estudiante</th>${mats.map(m=>`<th title="${esc(m)}">${esc(m.slice(0,4))}</th>`).join('')}<th>Prom.</th><th>Perd.</th></tr></thead>
+        <tbody>${lista.map(st=>{
+          const prom = avgOf(st.id, notaTerm);
+          const perd = mats.filter(m=>{ const v = markOf(st.id, notaTerm, m); return v !== null && v < 3; }).length;
+          return `<tr><td class="nm">${esc(st.name)}</td>
+            ${mats.map(m=>{ const v = markOf(st.id, notaTerm, m);
+              return `<td class="${v!==null&&v<3?'bad':''}">${v===null?'—':v.toFixed(1)}</td>`; }).join('')}
+            <td class="${prom!==null&&prom<3?'bad':''}"><b>${fmt(prom)}</b></td>
+            <td class="${perd?'bad':''}">${perd}</td></tr>`;
+        }).join('')}</tbody>
+      </table></div>` : '<p class="empty">Este curso no tiene estudiantes matriculados.</p>'}
+    </div>`;
+
+  $('dTerm').onchange = ()=>{ notaTerm = $('dTerm').value; panelDireccion(); };
+}
+
 function renderNotasFamilia(main){
   const hijos = myStudents();
   if(!hijos.length){
