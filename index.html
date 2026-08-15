@@ -121,6 +121,9 @@
     margin:22px 0 8px; font-weight:700;}
   .sub-head span{font-weight:400; text-transform:none; letter-spacing:0;}
   .zona-riesgo{border-color:#e0cdd2; background:#fcf7f8;}
+  .fallo{position:fixed; left:0; right:0; bottom:0; z-index:999; padding:12px 18px; cursor:pointer;
+    background:var(--red); color:#fff; font-size:13px; font-family:'IBM Plex Mono',monospace;}
+  .fallo[hidden]{display:none;}
   .diag{margin-top:14px; padding:14px; border-radius:8px; background:var(--ink); color:#CCD5E2;
     font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-x:auto;}
   .sub-tabs{display:flex; gap:8px; margin:0 0 18px; flex-wrap:wrap;}
@@ -613,31 +616,55 @@ async function diagnostico(){
   out.hidden = false;
   const L = [];
   const line = t => { L.push(t); out.textContent = L.join('\n'); };
+  const probar = async (etiqueta, fn) => {
+    try{ const r = await fn(); line(etiqueta.padEnd(28) + '✔ ' + (r || 'ok')); }
+    catch(e){ line(etiqueta.padEnd(28) + '✘ ' + (e.code || e.message)); }
+  };
 
-  line('Correo:  ' + (auth.currentUser?.email || '—'));
-  line('UID:     ' + (auth.currentUser?.uid || '—'));
-  line('Rol:     ' + (currentUser?.role || '—'));
-  line('');
+  line('correo : ' + (auth.currentUser?.email || '—'));
+  line('uid    : ' + (auth.currentUser?.uid || '—'));
+  line('rol    : ' + (currentUser?.role || '—'));
+  line('─'.repeat(46));
 
-  try{
+  await probar('leer mi ficha', async ()=>{
+    const d = await getDoc(doc(COL_USUARIOS, currentUser.id));
+    return d.exists() ? 'role=' + d.data().role : 'NO EXISTE';
+  });
+  await probar('leer colegio/config', async ()=>{
     const d = await getDoc(DOC_CONFIG);
-    line('LEER colegio/config  → ' + (d.exists() ? 'existe' : 'NO existe'));
-    if(d.exists()) line('   estadoTerms actual: ' + JSON.stringify(d.data().estadoTerms || {}));
-  }catch(e){ line('LEER colegio/config  → ERROR: ' + (e.code || e.message)); }
-
-  try{
+    return d.exists() ? 'periodos=' + JSON.stringify(d.data().estadoTerms||{}) : 'no existe aún';
+  });
+  await probar('ESCRIBIR colegio/config', async ()=>{
     await setDoc(DOC_CONFIG, { pruebaDiag: Date.now() }, { merge:true });
-    line('ESCRIBIR config      → aceptado');
-  }catch(e){ line('ESCRIBIR config      → ERROR: ' + (e.code || e.message)); }
+    return 'aceptado';
+  });
+  await probar('leer colegio/estudiantes', async ()=>{
+    const d = await getDoc(DOC_NOMINA);
+    return d.exists() ? ((d.data().students||[]).length + ' estudiantes') : 'no existe aún';
+  });
+  await probar('ESCRIBIR estudiantes', async ()=>{
+    await setDoc(DOC_NOMINA, { pruebaDiag: Date.now() }, { merge:true });
+    return 'aceptado';
+  });
+  await probar('leer usuarios', async ()=>{
+    const d = await getDocs(COL_USUARIOS); return d.size + ' cuentas';
+  });
+  await probar('leer acudientes', async ()=>{
+    const d = await getDocs(COL_ACUDIENTES); return d.size + ' cédulas';
+  });
+  await probar('leer reportes', async ()=>{
+    const d = await getDocs(COL_REPORTES); return d.size + ' reportes';
+  });
+  await probar('leer directorio', async ()=>{
+    const d = await getDocs(COL_DIRECTORIO); return d.size + ' profesores';
+  });
+  await probar('leer mis mensajes', async ()=>{
+    const d = await getDocs(query(COL_MSG, where('from','==',currentUser.id)));
+    return d.size + ' enviados';
+  });
 
-  try{
-    const d2 = await getDoc(DOC_CONFIG);
-    line('RELEER config        → ' + (d2.exists() && d2.data().pruebaDiag ? 'el cambio quedó' : 'el cambio NO quedó'));
-  }catch(e){ line('RELEER config        → ERROR: ' + (e.code || e.message)); }
-
-  line('');
-  line('Si dice permission-denied, las reglas de Firestore');
-  line('publicadas no son las últimas.');
+  line('─'.repeat(46));
+  line('Las líneas con ✘ son las que el servidor rechaza.');
 }
 
 async function guardarEstadoPeriodo(term, estado){
@@ -936,6 +963,48 @@ function activarEscuchas(){
   escucharCambios();
   escucharMensajes();
 }
+
+/* Un solo escucha para toda la página, puesto una vez al arrancar.
+   Ningún redibujado lo borra y ningún error de render lo impide. */
+document.addEventListener('click', async ev => {
+  if(!currentUser) return;
+
+  const per = ev.target.closest('[data-per]');
+  if(per){
+    const t = per.dataset.per;
+    const estado = (DB.estadoTerms||{})[t] === 'abierto' ? 'cerrado' : 'abierto';
+    const ok = await guardarEstadoPeriodo(t, estado);
+    if(ok) toast(estado === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
+    return renderAdmin($('main'));
+  }
+
+  const limp = ev.target.closest('[data-limp]');
+  if(limp){
+    DB.limpiar = (DB.limpiar||[]).filter(m => m !== limp.dataset.limp);
+    await save();
+    return renderAdmin($('main'));
+  }
+
+  if(ev.target.closest('#btnDiag')) return diagnostico();
+  if(ev.target.closest('#btnWipe')) return reiniciarPortal();
+});
+
+/* Si algo se rompe, que se vea en pantalla y no solo en la consola */
+function mostrarFallo(msg){
+  let barra = $('fallo');
+  if(!barra){
+    barra = document.createElement('div');
+    barra.id = 'fallo';
+    barra.className = 'fallo';
+    document.body.appendChild(barra);
+  }
+  barra.textContent = 'Fallo: ' + msg;
+  barra.hidden = false;
+  barra.onclick = ()=>{ barra.hidden = true; };
+}
+window.addEventListener('error', e => mostrarFallo(e.message));
+window.addEventListener('unhandledrejection', e =>
+  mostrarFallo((e.reason && (e.reason.code || e.reason.message)) || 'promesa rechazada'));
 
 (function boot(){
   $('boot').hidden = true;
@@ -1880,28 +1949,6 @@ function renderAdmin(main){
       </div>
       <p class="hint">Al crear la cuenta verás una sola vez su código y una contraseña temporal. Anótalos y entrégalos en mano: no se vuelven a mostrar.</p>
     </div>`;
-
-  /* Delegación: un solo escucha en el contenedor. Aunque falle cualquier otra
-     parte del render, estos botones siguen respondiendo. */
-  main.onclick = async ev => {
-    const per = ev.target.closest('[data-per]');
-    if(per){
-      per.disabled = true;
-      const t = per.dataset.per;
-      const estado = (DB.estadoTerms||{})[t] === 'abierto' ? 'cerrado' : 'abierto';
-      const ok = await guardarEstadoPeriodo(t, estado);
-      if(ok) toast(estado === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
-      return renderAdmin(main);
-    }
-    const limp = ev.target.closest('[data-limp]');
-    if(limp){
-      DB.limpiar = (DB.limpiar||[]).filter(m => m !== limp.dataset.limp);
-      await save();
-      return renderAdmin(main);
-    }
-    if(ev.target.closest('#btnWipe')) return reiniciarPortal();
-    if(ev.target.closest('#btnDiag')) return diagnostico();
-  };
 
   fillStudents($('acStudent'), $('acCurso').value);
   linkCourse('acCurso','acStudent');
