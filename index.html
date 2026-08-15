@@ -433,9 +433,8 @@ async function cargarTodo(uid){
   if(!miDoc.exists()) return null;
   const yo = { id: uid, ...miDoc.data() };
 
-  const cfg = await getDoc(DOC_CONFIG);
+  const [cfg, dir] = await Promise.all([ getDoc(DOC_CONFIG), getDocs(COL_DIRECTORIO) ]);
   const config = cfg.exists() ? cfg.data() : {};
-  const dir = await getDocs(COL_DIRECTORIO);
   const directorio = dir.docs.map(d => ({ id:d.id, role:'profesor', ...d.data() }));
 
   const base = {
@@ -449,40 +448,44 @@ async function cargarTodo(uid){
   if(yo.role === 'familia'){
     base.students = yo.hijos || [];
     base.users = [ yo, ...directorio.filter(d => d.id !== uid) ];
-    for(const h of base.students){
-      const n = await getDoc(doc(COL_NOTAS, h.id));
-      if(n.exists()){ base.marks[h.id] = n.data().marks || {}; base.obs[h.id] = n.data().obs || {}; }
-    }
     const ids = base.students.map(h => h.id).slice(0, 10);
-    if(ids.length){
-      const r = await getDocs(query(COL_REPORTES, where('studentId','in', ids)));
-      base.reports = r.docs.map(d => ({ id:d.id, ...d.data() }));
-    }
+    const [notas, reps] = await Promise.all([
+      Promise.all(base.students.map(h => getDoc(doc(COL_NOTAS, h.id)))),
+      ids.length ? getDocs(query(COL_REPORTES, where('studentId','in', ids))) : null
+    ]);
+    notas.forEach((n, i) => {
+      if(n.exists()){
+        const id = base.students[i].id;
+        base.marks[id] = n.data().marks || {}; base.obs[id] = n.data().obs || {};
+      }
+    });
+    if(reps) base.reports = reps.docs.map(d => ({ id:d.id, ...d.data() }));
   }else{
-    const nom = await getDoc(DOC_NOMINA);
+    // Solo las notas de los cursos asignados, en tandas de 10 (límite de Firestore)
+    const mios = yo.role === 'profesor'
+      ? [...new Set([...(yo.cursos||[]), yo.director].filter(Boolean))] : [];
+    const tandas = [];
+    for(let i = 0; i < mios.length; i += 10) tandas.push(mios.slice(i, i + 10));
+
+    const [nom, us, r, notas, acu] = await Promise.all([
+      getDoc(DOC_NOMINA),
+      getDocs(COL_USUARIOS),
+      getDocs(COL_REPORTES),
+      Promise.all(tandas.map(t => getDocs(query(COL_NOTAS, where('curso','in', t))))),
+      yo.role === 'coordinador' ? getDocs(COL_ACUDIENTES) : null
+    ]);
+
     base.students = nom.exists() ? (nom.data().students || []) : [];
-    const us = await getDocs(COL_USUARIOS);
     base.users = us.docs.map(d => ({ id:d.id, ...d.data() }));
     base.users.forEach(u => {
       const perfil = directorio.find(x => x.id === u.id);
       if(perfil) u.horario = perfil.horario;
     });
-    const r = await getDocs(COL_REPORTES);
     base.reports = r.docs.map(d => ({ id:d.id, ...d.data() }));
-
-    if(yo.role === 'profesor'){
-      // Solo las notas de los cursos que tiene asignados, en tandas de 10.
-      const mios = [...new Set([...(yo.cursos||[]), yo.director].filter(Boolean))];
-      for(let i = 0; i < mios.length; i += 10){
-        const tanda = mios.slice(i, i + 10);
-        const n = await getDocs(query(COL_NOTAS, where('curso','in', tanda)));
-        n.docs.forEach(d => { base.marks[d.id] = d.data().marks || {}; base.obs[d.id] = d.data().obs || {}; });
-      }
-    }
-    if(yo.role === 'coordinador'){
-      const a = await getDocs(COL_ACUDIENTES);
-      base.acudientes = a.docs.map(d => ({ cedula:d.id, ...d.data() }));
-    }
+    notas.forEach(snap => snap.docs.forEach(d => {
+      base.marks[d.id] = d.data().marks || {}; base.obs[d.id] = d.data().obs || {};
+    }));
+    if(acu) base.acudientes = acu.docs.map(d => ({ cedula:d.id, ...d.data() }));
   }
   base.students.forEach(x => { if(!x.curso) x.curso = '101'; });
   guardarEspejo(base);
@@ -556,12 +559,12 @@ async function save(){
   try{
     await Promise.all(tareas);
     storageOk = true;
+    guardarEspejo(DB);        // solo si de verdad quedó guardado
   }catch(e){
     storageOk = false;
     console.error('El servidor rechazó un cambio:', e);
     toast('El servidor rechazó el cambio. Revisa la consola.', true);
   }
-  guardarEspejo(DB);
 }
 
 /* El profesor solo puede tocar el campo "cursos" de su propia ficha */
@@ -597,6 +600,24 @@ async function guardarDefinitivas(curso, materia, term, cambios){
     storageOk = false;
     console.error('No se pudieron publicar las notas:', e);
     toast('El servidor rechazó las notas: ' + (e.code || e.message), true);
+    return false;
+  }
+}
+
+/* Abrir o cerrar un periodo se escribe de una y se comprueba leyendo de vuelta. */
+async function guardarEstadoPeriodo(term, estado){
+  const nuevo = { ...(DB.estadoTerms||{}), [term]: estado };
+  try{
+    await setDoc(DOC_CONFIG, { estadoTerms: nuevo }, { merge:true });
+    const check = await getDoc(DOC_CONFIG);
+    if(!check.exists() || (check.data().estadoTerms||{})[term] !== estado)
+      throw new Error('El servidor no guardó el cambio.');
+    DB.estadoTerms = nuevo;
+    espejo.config = { ...(espejo.config||{}), estadoTerms: { ...nuevo } };
+    return true;
+  }catch(e){
+    console.error('No se pudo cambiar el periodo:', e);
+    toast('No se pudo cambiar el periodo: ' + (e.code || e.message), true);
     return false;
   }
 }
@@ -928,8 +949,11 @@ async function doLogin(){
   let cargado = null;
   try{
     cargado = await cargarTodo(uid2);
-    // Primer ingreso del portal: coordinación registra su propia ficha
-    if(!cargado && code === COORD_CODE){
+    // Primer ingreso del portal: coordinación registra su propia ficha.
+    // Se compara por correo, no por lo que se escribió, para que no falle
+    // si alguien confunde la letra O con un cero.
+    const correoActual = (auth.currentUser.email || '').toLowerCase();
+    if(!cargado && correoActual === emailDe(COORD_CODE)){
       await setDoc(doc(COL_USUARIOS, uid2), {
         code: COORD_CODE, name: 'Coordinación académica',
         role: 'coordinador', subject: '', studentIds: [], hijos: [], bootstrap: true
@@ -944,9 +968,12 @@ async function doLogin(){
   }
   $('btnLogin').disabled = false;
   if(!cargado){
-    console.warn('Sin ficha en usuarios/' + uid2 + ' para el código ' + code);
+    const correo = (auth.currentUser.email || '(sin correo)').toLowerCase();
+    console.warn('Sin ficha en usuarios/' + uid2 + ' · correo: ' + correo);
     await signOut(auth);
-    return showAlert('loginAlert','Tu cuenta existe pero no tiene ficha en el portal. Coordinación debe volver a crearla.');
+    return showAlert('loginAlert', correo === emailDe(COORD_CODE)
+      ? 'La ficha de coordinación no se pudo crear. Revisa las reglas de Firestore.'
+      : `Esta cuenta (${correo}) no tiene ficha en el portal. Si es la de coordinación, en Firebase debe llamarse exactamente ${emailDe(COORD_CODE)} — ojo: son letras O, no ceros.`);
   }
   if(cargado.yo.activo === false){
     await signOut(auth);
@@ -1458,14 +1485,28 @@ async function publicarDefinitivas(){
   if(!cambios.length){
     return toast(invalidas ? `${invalidas} nota(s) fuera del rango 1.0–5.0.` : 'No hay cambios que publicar.', !!invalidas);
   }
-  const ok = await guardarDefinitivas(notaCurso, notaMateria, notaTerm, cambios);
-  if(!ok) return;
+  // Se pinta de una y se envía por detrás: no hay que esperar al servidor.
+  const previo = cambios.map(c=>({
+    st: c.st,
+    valor: markOf(c.st.id, notaTerm, notaMateria),
+    obsTxt: obsOf(c.st.id, notaTerm, notaMateria)
+  }));
+  const materia = notaMateria, term = notaTerm, curso = notaCurso;
   cambios.forEach(c=>{
-    setMark(c.st.id, notaTerm, notaMateria, c.valor);
-    setObs(c.st.id, notaTerm, notaMateria, c.obsTxt);
+    setMark(c.st.id, term, materia, c.valor);
+    setObs(c.st.id, term, materia, c.obsTxt);
   });
   toast(invalidas ? `${cambios.length} publicadas · ${invalidas} fuera de rango` : `${cambios.length} nota(s) publicadas`);
   panelMateria();
+
+  guardarDefinitivas(curso, materia, term, cambios).then(ok=>{
+    if(ok) return;
+    previo.forEach(v=>{                       // el servidor las rechazó: se devuelven
+      setMark(v.st.id, term, materia, v.valor);
+      setObs(v.st.id, term, materia, v.obsTxt);
+    });
+    if(notaMateria === materia && notaTerm === term && notaCurso === curso) panelMateria();
+  });
 }
 
 /* ---------- Dirección de curso: el panorama completo ---------- */
@@ -1799,26 +1840,33 @@ function renderAdmin(main){
       <p class="hint">Al crear la cuenta verás una sola vez su código y una contraseña temporal. Anótalos y entrégalos en mano: no se vuelven a mostrar.</p>
     </div>`;
 
+  /* Delegación: un solo escucha en el contenedor. Aunque falle cualquier otra
+     parte del render, estos botones siguen respondiendo. */
+  main.onclick = async ev => {
+    const per = ev.target.closest('[data-per]');
+    if(per){
+      per.disabled = true;
+      const t = per.dataset.per;
+      const estado = (DB.estadoTerms||{})[t] === 'abierto' ? 'cerrado' : 'abierto';
+      const ok = await guardarEstadoPeriodo(t, estado);
+      if(ok) toast(estado === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
+      return renderAdmin(main);
+    }
+    const limp = ev.target.closest('[data-limp]');
+    if(limp){
+      DB.limpiar = (DB.limpiar||[]).filter(m => m !== limp.dataset.limp);
+      await save();
+      return renderAdmin(main);
+    }
+    if(ev.target.closest('#btnWipe')) return reiniciarPortal();
+  };
+
   fillStudents($('acStudent'), $('acCurso').value);
   linkCourse('acCurso','acStudent');
   drawAcudientes();
   $('acQuery').oninput = ()=>{ acQuery = $('acQuery').value; drawAcudientes(); };
   $('uQuery').oninput = ()=>{ uQuery = $('uQuery').value; drawUsers(); };
   $('btnAddAcudiente').onclick = addAcudiente;
-  document.querySelectorAll('[data-per]').forEach(b=>b.onclick = async ()=>{
-    const t = b.dataset.per;
-    DB.estadoTerms = DB.estadoTerms || {};
-    DB.estadoTerms[t] = DB.estadoTerms[t] === 'abierto' ? 'cerrado' : 'abierto';
-    await save();
-    toast(DB.estadoTerms[t] === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
-    renderAdmin($('main'));
-  });
-
-  $('btnWipe').onclick = reiniciarPortal;
-  document.querySelectorAll('[data-limp]').forEach(b=>b.onclick = async ()=>{
-    DB.limpiar = (DB.limpiar||[]).filter(m => m !== b.dataset.limp);
-    await save(); renderAdmin($('main'));
-  });
 
   fillStudents($('uStudent'), $('uCurso').value);
   linkCourse('uCurso','uStudent');
