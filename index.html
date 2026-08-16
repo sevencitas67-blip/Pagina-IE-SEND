@@ -74,6 +74,8 @@
   .role-pill.profesor{background:var(--amber); color:var(--ink);}
   .role-pill.familia{background:var(--pen); color:#fff;}
   .role-pill.coordinador{background:var(--ink); color:var(--paper);}
+  .version{display:inline-block; margin-left:6px; font-size:10px; color:#94A0B5;
+    font-family:'IBM Plex Mono',monospace;}
   .tab-btn{display:flex; align-items:center; gap:11px; padding:12px 22px; color:#CCD5E2; font-size:14px; font-weight:500; border:none; background:none; text-align:left; width:100%; border-left:3px solid transparent; transition:background .12s ease;}
   .tab-btn:hover{background:rgba(255,255,255,0.06); color:#fff;}
   .tab-btn.active{background:var(--paper-dark); color:var(--ink); border-left-color:var(--amber); font-weight:600; border-radius:0 20px 20px 0; margin-right:10px;}
@@ -344,6 +346,7 @@
       <div class="name" id="sbName">—</div>
       <div class="code mono" id="sbCode">—</div>
       <span class="role-pill" id="sbRole">—</span>
+      <span class="version" id="sbVersion"></span>
     </div>
     <div id="tabList"></div>
     <div class="logout"><button id="btnLogout">Cerrar sesión</button></div>
@@ -569,6 +572,7 @@ async function save(){
   }
 
   try{
+    await asegurarIdentidad();
     await Promise.all(tareas);
     storageOk = true;
     guardarEspejo(DB);        // solo si de verdad quedó guardado
@@ -627,6 +631,7 @@ async function diagnostico(){
     catch(e){ line(etiqueta.padEnd(28) + '✘ ' + (e.code || e.message)); }
   };
 
+  line('versión: ' + VERSION);
   line('correo : ' + (auth.currentUser?.email || '—'));
   line('uid    : ' + (auth.currentUser?.uid || '—'));
   line('rol    : ' + (currentUser?.role || '—') + '  ·  código en ficha: ' + (currentUser?.code || '—'));
@@ -688,7 +693,7 @@ async function diagnostico(){
 async function guardarEstadoPeriodo(term, estado){
   const nuevo = { ...(DB.estadoTerms||{}), [term]: estado };
   try{
-    await setDoc(DOC_CONFIG, { estadoTerms: nuevo }, { merge:true });
+    await conPermiso(()=> setDoc(DOC_CONFIG, { estadoTerms: nuevo }, { merge:true }));
     const check = await getDoc(DOC_CONFIG);
     if(!check.exists() || (check.data().estadoTerms||{})[term] !== estado)
       throw new Error('El servidor no guardó el cambio.');
@@ -713,16 +718,7 @@ async function guardarMiHorarioClases(horarioClases){
 
 async function crearFicha(u){
   const { id, horario, ...datos } = u;
-  try{
-    await setDoc(doc(COL_USUARIOS, id), datos);
-  }catch(e){
-    if(e.code !== 'permission-denied') throw e;
-    // La credencial pudo quedar vieja (sesión larga, reglas recién publicadas):
-    // se renueva y se reintenta una vez antes de darlo por perdido.
-    console.warn('Reintentando con credencial renovada…');
-    await auth.currentUser.getIdToken(true);
-    await setDoc(doc(COL_USUARIOS, id), datos);
-  }
+  await conPermiso(()=> setDoc(doc(COL_USUARIOS, id), datos));
   const check = await getDoc(doc(COL_USUARIOS, id));
   if(!check.exists()) throw new Error('La ficha no quedó guardada en la base.');
   espejo.users = [...(espejo.users||[]), copia(u)];   // ya está al día
@@ -927,6 +923,7 @@ const FIJOS = [
    DATOS SEMILLA
    ===================================================================== */
 const DEMO_PASS = 'clave123';
+const VERSION = 'v12';
 const COORD_CODE = 'COO-1001';
 const COORD_PASS = 'coordinacion';
 const DEMO_ANSWER = 'cuaderno';
@@ -1047,6 +1044,27 @@ document.addEventListener('click', async ev => {
    · bloquea el botón mientras dura
    · impide que dos clics seguidos disparen la acción dos veces
    --------------------------------------------------------------- */
+/* La conexión secundaria nunca debe quedar con sesión abierta:
+   si queda, las escrituras salen con la identidad equivocada. */
+async function asegurarIdentidad(){
+  if(authAlta.currentUser){
+    console.warn('La conexión de altas quedó abierta; cerrándola.');
+    try{ await signOut(authAlta); }catch(e){}
+  }
+}
+
+/* Reintenta una vez con credencial renovada si el servidor niega el permiso */
+async function conPermiso(fn){
+  await asegurarIdentidad();
+  try{ return await fn(); }
+  catch(e){
+    if(e.code !== 'permission-denied') throw e;
+    console.warn('Permiso negado; renovando credencial y reintentando…');
+    await auth.currentUser.getIdToken(true);
+    return await fn();
+  }
+}
+
 let ocupado = false;
 async function conCarga(fn, boton){
   if(ocupado) return;                      // ya hay algo en curso
@@ -1328,6 +1346,8 @@ function enterApp(){
   const pill = $('sbRole');
   pill.textContent = nombreRol(currentUser.role);
   pill.className = 'role-pill ' + currentUser.role;
+  const sello = $('sbVersion');
+  if(sello) sello.textContent = VERSION;
 
   const spine = $('spine');
   spine.innerHTML = '';
