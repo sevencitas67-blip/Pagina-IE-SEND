@@ -370,7 +370,8 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword }
+import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword,
+         setPersistence, inMemoryPersistence }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, writeBatch, deleteField,
          collection, addDoc, query, orderBy, where, getDocs }
@@ -395,9 +396,13 @@ const appPrincipal = initializeApp(firebaseConfig);
 const nube = getFirestore(appPrincipal);
 const auth = getAuth(appPrincipal);
 
-/* App secundaria: crea cuentas nuevas sin cerrar la sesión de quien las crea */
+/* App secundaria: crea cuentas nuevas sin cerrar la sesión de quien las crea.
+   Va SIN memoria: no guarda nada en el navegador. Si guardara, pisaría la
+   sesión de quien está usando el portal y el servidor lo tomaría por otra
+   persona en las siguientes escrituras. */
 const appAlta = initializeApp(firebaseConfig, 'alta');
 const authAlta = getAuth(appAlta);
+setPersistence(authAlta, inMemoryPersistence).catch(e => console.error('persistencia alta:', e));
 
 /* El código de acceso se convierte en un correo interno. El usuario nunca lo ve. */
 const emailDe = code => String(code||'').trim().toLowerCase().replace(/\s+/g,'') + '@ie-send.local';
@@ -407,10 +412,17 @@ const emailDe = code => String(code||'').trim().toLowerCase().replace(/\s+/g,'')
    Si queda una sesión abierta ahí, las escrituras siguientes salen con la
    identidad equivocada y el servidor las rechaza. */
 async function crearCuentaAuth(code, pass){
+  const yoAntes = auth.currentUser ? auth.currentUser.email : null;
+  await setPersistence(authAlta, inMemoryPersistence);
   const cred = await createUserWithEmailAndPassword(authAlta, emailDe(code), pass);
   const nuevoUid = cred.user.uid;
   try{ await signOut(authAlta); }catch(e){}
-  // Se renueva la credencial propia antes de escribir, para no usar una vencida
+
+  // Comprobación: mi sesión tiene que seguir siendo la mía
+  const yoAhora = auth.currentUser ? auth.currentUser.email : null;
+  if(yoAhora !== yoAntes){
+    throw new Error('Tu sesión cambió a ' + yoAhora + '. Cierra sesión y vuelve a entrar.');
+  }
   try{ await auth.currentUser.getIdToken(true); }catch(e){}
   return nuevoUid;
 }
@@ -636,6 +648,8 @@ async function diagnostico(){
   line('uid    : ' + (auth.currentUser?.uid || '—'));
   line('rol    : ' + (currentUser?.role || '—') + '  ·  código en ficha: ' + (currentUser?.code || '—'));
   line('alta   : ' + (authAlta.currentUser ? '⚠ sesión abierta (' + authAlta.currentUser.email + ')' : 'cerrada, correcto'));
+  line('sesión : ' + ((currentUser && auth.currentUser && auth.currentUser.email === emailDe(currentUser.code))
+        ? 'coincide con ' + currentUser.code : '⚠ NO coincide con ' + (currentUser?.code || '—')));
   line('─'.repeat(46));
 
   await probar('leer mi ficha', async ()=>{
@@ -923,7 +937,7 @@ const FIJOS = [
    DATOS SEMILLA
    ===================================================================== */
 const DEMO_PASS = 'clave123';
-const VERSION = 'v12';
+const VERSION = 'v13';
 const COORD_CODE = 'COO-1001';
 const COORD_PASS = 'coordinacion';
 const DEMO_ANSWER = 'cuaderno';
@@ -1050,6 +1064,13 @@ async function asegurarIdentidad(){
   if(authAlta.currentUser){
     console.warn('La conexión de altas quedó abierta; cerrándola.');
     try{ await signOut(authAlta); }catch(e){}
+  }
+  // La sesión activa tiene que corresponder al código con el que se entró
+  if(currentUser && auth.currentUser &&
+     auth.currentUser.email !== emailDe(currentUser.code)){
+    mostrarFallo('Tu sesión se cambió a ' + auth.currentUser.email +
+                 '. Toca aquí, cierra sesión y vuelve a entrar como ' + currentUser.code + '.');
+    throw new Error('sesión-cambiada');
   }
 }
 
