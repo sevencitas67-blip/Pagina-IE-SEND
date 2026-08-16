@@ -623,7 +623,7 @@ async function diagnostico(){
 
   line('correo : ' + (auth.currentUser?.email || '—'));
   line('uid    : ' + (auth.currentUser?.uid || '—'));
-  line('rol    : ' + (currentUser?.role || '—'));
+  line('rol    : ' + (currentUser?.role || '—') + '  ·  código en ficha: ' + (currentUser?.code || '—'));
   line('─'.repeat(46));
 
   await probar('leer mi ficha', async ()=>{
@@ -1077,6 +1077,13 @@ async function doLogin(){
     return showAlert('loginAlert', correo === emailDe(COORD_CODE)
       ? 'La ficha de coordinación no se pudo crear. Revisa las reglas de Firestore.'
       : `Esta cuenta (${correo}) no tiene ficha en el portal. Si es la de coordinación, en Firebase debe llamarse exactamente ${emailDe(COORD_CODE)} — ojo: son letras O, no ceros.`);
+  }
+  const prefijoEsperado = { coordinador:'COO', profesor:'DOC', familia:'FAM' }[cargado.yo.role];
+  if(cargado.yo.code !== code || !code.startsWith(prefijoEsperado || '')){
+    console.warn('Ficha inconsistente:', code, cargado.yo);
+    await signOut(auth);
+    return showAlert('loginAlert',
+      `Esta cuenta está mal configurada: el código ${code} está guardado como ${nombreRol(cargado.yo.role)} (${esc(cargado.yo.code)}). Coordinación debe borrarla y crearla de nuevo.`);
   }
   if(cargado.yo.activo === false){
     await signOut(auth);
