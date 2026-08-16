@@ -367,7 +367,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword, deleteUser }
+import { getAuth, signInWithEmailAndPassword, signOut, updatePassword, createUserWithEmailAndPassword }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, writeBatch, deleteField,
          collection, addDoc, query, orderBy, where, getDocs }
@@ -400,17 +400,16 @@ const authAlta = getAuth(appAlta);
 const emailDe = code => String(code||'').trim().toLowerCase().replace(/\s+/g,'') + '@ie-send.local';
 /* El acceso se crea, pero queda a prueba: si la ficha no se guarda, se deshace.
    Así nunca quedan correos sueltos en Authentication. */
+/* Crea el acceso en la app secundaria y la cierra de inmediato.
+   Si queda una sesión abierta ahí, las escrituras siguientes salen con la
+   identidad equivocada y el servidor las rechaza. */
 async function crearCuentaAuth(code, pass){
   const cred = await createUserWithEmailAndPassword(authAlta, emailDe(code), pass);
-  return cred.user.uid;              // sigue con sesión en la app secundaria
-}
-async function confirmarCuentaAuth(){
+  const nuevoUid = cred.user.uid;
   try{ await signOut(authAlta); }catch(e){}
-}
-async function deshacerCuentaAuth(){
-  try{ if(authAlta.currentUser) await deleteUser(authAlta.currentUser); }
-  catch(e){ console.error('No se pudo deshacer el acceso:', e); }
-  try{ await signOut(authAlta); }catch(e){}
+  // Se renueva la credencial propia antes de escribir, para no usar una vencida
+  try{ await auth.currentUser.getIdToken(true); }catch(e){}
+  return nuevoUid;
 }
 /* =====================================================================
    Los datos ya no viven en un solo bloque. Cada cosa tiene su colección,
@@ -631,6 +630,7 @@ async function diagnostico(){
   line('correo : ' + (auth.currentUser?.email || '—'));
   line('uid    : ' + (auth.currentUser?.uid || '—'));
   line('rol    : ' + (currentUser?.role || '—') + '  ·  código en ficha: ' + (currentUser?.code || '—'));
+  line('alta   : ' + (authAlta.currentUser ? '⚠ sesión abierta (' + authAlta.currentUser.email + ')' : 'cerrada, correcto'));
   line('─'.repeat(46));
 
   await probar('leer mi ficha', async ()=>{
@@ -2274,12 +2274,19 @@ function drawAcudientes(){
       await crearFicha(nuevo);
     }catch(e){
       console.error('Falló la ficha:', e);
-      await deshacerCuentaAuth();
+      DB.limpiar = [...new Set([...(DB.limpiar||[]), emailDe(code)])];
+      try{ await save(); }catch(_){}
       return confirmDialog('No se pudo crear la cuenta',
-        `El servidor rechazó guardar la ficha, así que deshice el acceso: no quedó ningún correo suelto.\n\nMotivo exacto:\n${e.code || e.message}\n\nSi dice permission-denied, faltan las reglas nuevas de Firestore.`,
+        `El servidor rechazó guardar la ficha de ${code}.
+
+Motivo: ${e.code || e.message}
+`
+        + `Sesión usada: ${auth.currentUser ? auth.currentUser.email : 'ninguna'}
+
+`
+        + `El acceso quedó suelto en Firebase. Lo anoté en Administración → Zona de riesgo para que lo borres.`,
         'Entendido', true);
     }
-    await confirmarCuentaAuth();
     DB.users.push(nuevo);
     a.userId = nuevo.id;
     a.nombre = nombre.trim();
@@ -2392,13 +2399,20 @@ async function addUser(){
   try{
     await crearFicha(nuevo);
     }catch(e){
-    console.error('Falló la ficha:', e);
-    await deshacerCuentaAuth();
-    return confirmDialog('No se pudo crear la cuenta',
-      `El servidor rechazó guardar la ficha, así que deshice el acceso: no quedó ningún correo suelto.\n\nMotivo exacto:\n${e.code || e.message}\n\nSi dice permission-denied, faltan las reglas nuevas de Firestore.`,
-      'Entendido', true);
-  }
-  await confirmarCuentaAuth();
+      console.error('Falló la ficha:', e);
+      DB.limpiar = [...new Set([...(DB.limpiar||[]), emailDe(code)])];
+      try{ await save(); }catch(_){}
+      return confirmDialog('No se pudo crear la cuenta',
+        `El servidor rechazó guardar la ficha de ${code}.
+
+Motivo: ${e.code || e.message}
+`
+        + `Sesión usada: ${auth.currentUser ? auth.currentUser.email : 'ninguna'}
+
+`
+        + `El acceso quedó suelto en Firebase. Lo anoté en Administración → Zona de riesgo para que lo borres.`,
+        'Entendido', true);
+    }
   DB.users.push(nuevo);
   await save();
   renderAdmin($('main'));
