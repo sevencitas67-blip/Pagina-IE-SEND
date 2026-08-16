@@ -712,15 +712,37 @@ async function borrarMensajesDe(userId){
 }
 
 /* Borrado total · solo coordinación. Conserva la propia cuenta para poder volver a entrar. */
-async function borrarTodo(){
-  for(const c of [COL_USUARIOS, COL_DIRECTORIO, COL_NOTAS, COL_REPORTES, COL_ACUDIENTES, COL_MSG]){
+async function borrarTodo(line = ()=>{}){
+  const fallos = [];
+  const grupos = [
+    ['cuentas',    COL_USUARIOS],
+    ['directorio', COL_DIRECTORIO],
+    ['notas',      COL_NOTAS],
+    ['reportes',   COL_REPORTES],
+    ['acudientes', COL_ACUDIENTES],
+    ['mensajes',   COL_MSG],
+  ];
+  for(const [nombre, c] of grupos){
     try{
       const d = await getDocs(c);
-      await Promise.all(d.docs.filter(x => x.id !== currentUser.id).map(x => deleteDoc(x.ref)));
-    }catch(e){ console.error(e); }
+      const borrables = d.docs.filter(x => x.id !== currentUser.id);
+      // De a 200 para no pasar el límite de un lote
+      for(let i = 0; i < borrables.length; i += 200){
+        const lote = writeBatch(nube);
+        borrables.slice(i, i + 200).forEach(x => lote.delete(x.ref));
+        await lote.commit();
+      }
+      line(nombre.padEnd(12) + '✔ ' + borrables.length);
+    }catch(e){
+      line(nombre.padEnd(12) + '✘ ' + (e.code || e.message));
+      fallos.push(nombre + ': ' + (e.code || e.message));
+    }
   }
-  try{ await deleteDoc(DOC_NOMINA); }catch(e){}
-  try{ await deleteDoc(DOC_CONFIG); }catch(e){}
+  for(const [nombre, ref] of [['nómina', DOC_NOMINA], ['configuración', DOC_CONFIG]]){
+    try{ await deleteDoc(ref); line(nombre.padEnd(12) + '✔'); }
+    catch(e){ line(nombre.padEnd(12) + '✘ ' + (e.code || e.message)); fallos.push(nombre); }
+  }
+  return fallos;
 }
 
 /* ---------- CHAT EN VIVO ----------
@@ -971,11 +993,14 @@ document.addEventListener('click', async ev => {
 
   const per = ev.target.closest('[data-per]');
   if(per){
+    if(per.dataset.ocupado) return;          // evita dobles clics encimados
+    per.dataset.ocupado = '1';
+    per.textContent = 'Guardando…';
     const t = per.dataset.per;
     const estado = (DB.estadoTerms||{})[t] === 'abierto' ? 'cerrado' : 'abierto';
     const ok = await guardarEstadoPeriodo(t, estado);
     if(ok) toast(estado === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
-    return renderAdmin($('main'));
+    return drawPeriodos();                   // repinta solo esta tabla
   }
 
   const limp = ev.target.closest('[data-limp]');
@@ -1187,15 +1212,29 @@ $('btnFgSave').onclick = async ()=>{
 };
 async function reiniciarPortal(){
   if(!isCoord()) return;
-  const ok = await confirmDialog('Borrar el portal completo',
-    'Se borran estudiantes, notas, reportes, mensajes, acudientes y TODAS las cuentas, incluida la tuya. No se puede deshacer.',
+  const paso1 = await confirmDialog('Borrar el portal completo',
+    'Se borran estudiantes, notas, reportes, mensajes, acudientes y todas las cuentas menos la tuya. No se puede deshacer.',
     'Continuar');
-  if(!ok) return;
-  const escrito = prompt('Para confirmar, escribe exactamente:  BORRAR TODO');
-  if(escrito !== 'BORRAR TODO') return toast('Cancelado: el texto no coincide.', true);
-  toast('Borrando…');
-  await borrarTodo();
-  location.reload();
+  if(!paso1) return;
+  const paso2 = await confirmDialog('Última confirmación',
+    'Esto es definitivo. ¿Seguro que quieres borrar todo el contenido del portal?',
+    'Sí, borrar todo');
+  if(!paso2) return;
+
+  const out = $('diagOut');
+  if(out){ out.hidden = false; out.textContent = 'Borrando…\n'; }
+  const line = t => { if(out) out.textContent += t + '\n'; };
+  const fallos = await borrarTodo(line);
+
+  if(fallos.length){
+    line('');
+    line('Quedaron cosas sin borrar. Recarga para ver el estado real.');
+    await confirmDialog('Borrado incompleto',
+      'Algunas partes las rechazó el servidor:\n\n' + fallos.join('\n'), 'Entendido', true);
+    return;
+  }
+  line('Listo. Recargando…');
+  setTimeout(()=>location.reload(), 700);
 }
 $('btnLogout').onclick = async ()=>{
   try{ await signOut(auth); }catch(e){}
@@ -1876,12 +1915,7 @@ function renderAdmin(main){
       <div class="card-head"><h3>Periodos académicos</h3></div>
       <p class="subtitle" style="margin-bottom:16px">Mientras un periodo está cerrado, ningún profesor puede poner ni quitar notas de ese periodo. Ábrelo cuando empiece y ciérralo cuando termine.</p>
       <div class="table-wrap"><table><thead><tr><th>Periodo</th><th>Estado</th><th></th></tr></thead>
-      <tbody>${DB.terms.map(t=>{
-        const ab = (DB.estadoTerms||{})[t] === 'abierto';
-        return `<tr><td><b>${esc(t)}</b></td>
-          <td>${ab ? '<span class="tag familia">Abierto</span>' : '<span class="tag">Cerrado</span>'}</td>
-          <td style="text-align:right"><button class="btn ${ab?'ghost':''} tiny" data-per="${esc(t)}">${ab?'Cerrar periodo':'Abrir periodo'}</button></td></tr>`;
-      }).join('')}</tbody></table></div>
+      <tbody id="perBody"></tbody></table></div>
     </div>
 
     <div class="card">
@@ -1957,6 +1991,7 @@ function renderAdmin(main){
       <p class="hint">Al crear la cuenta verás una sola vez su código y una contraseña temporal. Anótalos y entrégalos en mano: no se vuelven a mostrar.</p>
     </div>`;
 
+  drawPeriodos();
   fillStudents($('acStudent'), $('acCurso').value);
   linkCourse('acCurso','acStudent');
   drawAcudientes();
@@ -2100,6 +2135,17 @@ async function addAcudiente(){
   await save(); drawAcudientes();
   toast('Cédula autorizada. Ya puede registrarse.');
 }
+function drawPeriodos(){
+  const box = $('perBody');
+  if(!box) return;
+  box.innerHTML = DB.terms.map(t=>{
+    const ab = (DB.estadoTerms||{})[t] === 'abierto';
+    return `<tr><td><b>${esc(t)}</b></td>
+      <td>${ab ? '<span class="tag familia">Abierto</span>' : '<span class="tag">Cerrado</span>'}</td>
+      <td style="text-align:right"><button class="btn ${ab?'ghost':''} tiny" data-per="${esc(t)}">${ab?'Cerrar periodo':'Abrir periodo'}</button></td></tr>`;
+  }).join('');
+}
+
 function drawAcudientes(){
   const q = norm(acQuery);
   const lista = DB.acudientes.filter(a=>!q || a.cedula.includes(q) || norm(a.nombre).includes(q));
