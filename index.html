@@ -121,6 +121,12 @@
     margin:22px 0 8px; font-weight:700;}
   .sub-head span{font-weight:400; text-transform:none; letter-spacing:0;}
   .zona-riesgo{border-color:#e0cdd2; background:#fcf7f8;}
+  .cargando{position:fixed; top:0; left:0; right:0; height:3px; z-index:1000; background:rgba(0,0,0,0.08); overflow:hidden;}
+  .cargando[hidden]{display:none;}
+  .cargando span{position:absolute; inset:0; width:38%; background:var(--amber); border-radius:0 3px 3px 0;
+    animation:corre 1.1s ease-in-out infinite;}
+  @keyframes corre{0%{left:-38%;} 100%{left:100%;}}
+  .btn[disabled], .btn-primary[disabled]{opacity:.55; cursor:progress;}
   .fallo{position:fixed; left:0; right:0; bottom:0; z-index:999; padding:12px 18px; cursor:pointer;
     background:var(--red); color:#fff; font-size:13px; font-family:'IBM Plex Mono',monospace;}
   .fallo[hidden]{display:none;}
@@ -356,6 +362,7 @@
   </div>
 </div>
 
+<div class="cargando" id="cargando" hidden><span></span></div>
 <div class="toast" id="toast" hidden></div>
 
 <script type="module">
@@ -628,7 +635,18 @@ async function diagnostico(){
 
   await probar('leer mi ficha', async ()=>{
     const d = await getDoc(doc(COL_USUARIOS, currentUser.id));
-    return d.exists() ? 'role=' + d.data().role : 'NO EXISTE';
+    if(!d.exists()) return 'NO EXISTE ← esto rompe todos los permisos';
+    line('   ficha en el servidor: ' + JSON.stringify(d.data()).slice(0, 300));
+    return d.data().role === 'coordinador'
+      ? 'role=coordinador (correcto)'
+      : 'role=' + d.data().role + ' ← NO es coordinador';
+  });
+  await probar('CREAR una cuenta nueva', async ()=>{
+    const ref = doc(COL_USUARIOS, 'prueba_diagnostico');
+    await setDoc(ref, { code:'ZZZ-0000', name:'Prueba', role:'profesor',
+                        subjects:[], director:'', cursos:[], studentIds:[], hijos:[] });
+    await deleteDoc(ref);
+    return 'crear y borrar aceptado';
   });
   await probar('leer colegio/config', async ()=>{
     const d = await getDoc(DOC_CONFIG);
@@ -695,7 +713,16 @@ async function guardarMiHorarioClases(horarioClases){
 
 async function crearFicha(u){
   const { id, horario, ...datos } = u;
-  await setDoc(doc(COL_USUARIOS, id), datos);
+  try{
+    await setDoc(doc(COL_USUARIOS, id), datos);
+  }catch(e){
+    if(e.code !== 'permission-denied') throw e;
+    // La credencial pudo quedar vieja (sesión larga, reglas recién publicadas):
+    // se renueva y se reintenta una vez antes de darlo por perdido.
+    console.warn('Reintentando con credencial renovada…');
+    await auth.currentUser.getIdToken(true);
+    await setDoc(doc(COL_USUARIOS, id), datos);
+  }
   const check = await getDoc(doc(COL_USUARIOS, id));
   if(!check.exists()) throw new Error('La ficha no quedó guardada en la base.');
   espejo.users = [...(espejo.users||[]), copia(u)];   // ya está al día
@@ -998,7 +1025,7 @@ document.addEventListener('click', async ev => {
     per.textContent = 'Guardando…';
     const t = per.dataset.per;
     const estado = (DB.estadoTerms||{})[t] === 'abierto' ? 'cerrado' : 'abierto';
-    const ok = await guardarEstadoPeriodo(t, estado);
+    const ok = await conCarga(()=> guardarEstadoPeriodo(t, estado));
     if(ok) toast(estado === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
     return drawPeriodos();                   // repinta solo esta tabla
   }
@@ -1010,9 +1037,35 @@ document.addEventListener('click', async ev => {
     return renderAdmin($('main'));
   }
 
-  if(ev.target.closest('#btnDiag')) return diagnostico();
+  if(ev.target.closest('#btnDiag')) return conCarga(diagnostico, ev.target.closest('#btnDiag'));
   if(ev.target.closest('#btnWipe')) return reiniciarPortal();
 });
+
+/* ---------------------------------------------------------------
+   Toda acción que escriba en el servidor pasa por aquí:
+   · muestra la barra de carga
+   · bloquea el botón mientras dura
+   · impide que dos clics seguidos disparen la acción dos veces
+   --------------------------------------------------------------- */
+let ocupado = false;
+async function conCarga(fn, boton){
+  if(ocupado) return;                      // ya hay algo en curso
+  ocupado = true;
+  const barra = $('cargando');
+  if(barra) barra.hidden = false;
+  const textoPrevio = boton ? boton.textContent : null;
+  if(boton){ boton.disabled = true; boton.textContent = 'Guardando…'; }
+  try{
+    return await fn();
+  }catch(e){
+    console.error(e);
+    mostrarFallo((e && (e.code || e.message)) || 'error inesperado');
+  }finally{
+    ocupado = false;
+    if(barra) barra.hidden = true;
+    if(boton){ boton.disabled = false; boton.textContent = textoPrevio; }
+  }
+}
 
 /* Si algo se rompe, que se vea en pantalla y no solo en la consola */
 function mostrarFallo(msg){
@@ -1051,7 +1104,7 @@ function gate(view){
   ['viewLogin','viewForgot','viewRegistro'].forEach(v => $(v).hidden = v !== view);
   $('app').classList.remove('active');
 }
-$('btnLogin').onclick = doLogin;
+$('btnLogin').onclick = ()=> conCarga(doLogin, $('btnLogin'));
 $('loginPass').onkeydown = e => { if(e.key === 'Enter') doLogin(); };
 $('loginCode').onkeydown = e => { if(e.key === 'Enter') $('loginPass').focus(); };
 
@@ -1495,7 +1548,7 @@ function renderCursos(main){
     : '<div class="card"><p class="empty">Todavía no marcaste tus cursos. Ve a “Mi cuenta” → Mis cursos.</p></div>'}`;
 
   if($('btnSaveHorarioClases')){
-    $('btnSaveHorarioClases').onclick = async ()=>{
+    $('btnSaveHorarioClases').onclick = ()=> conCarga(async ()=>{
       const nuevoH = {};
       document.querySelectorAll('.celda').forEach(sel=>{ if(sel.value) nuevoH[sel.dataset.k] = sel.value; });
       currentUser.horarioClases = nuevoH;
@@ -1503,7 +1556,7 @@ function renderCursos(main){
       if(yo4) yo4.horarioClases = nuevoH;
       await guardarMiHorarioClases(nuevoH);
       renderCursos(main);
-    };
+    }, $('btnSaveHorarioClases'));
     document.querySelectorAll('.celda').forEach(sel=>{
       sel.onchange = ()=>{ sel.closest('td').classList.toggle('ocupada', !!sel.value); };
     });
@@ -1608,11 +1661,22 @@ function panelMateria(){
   $('notaPanel').querySelectorAll('input.nota').forEach(inp=>{
     inp.oninput = ()=>{ const v = parseFloat(inp.value); inp.classList.toggle('bad', !isNaN(v) && v < 3); };
   });
-  if($('btnPublicar')) $('btnPublicar').onclick = publicarDefinitivas;
+  if($('btnPublicar')) $('btnPublicar').onclick = ()=> conCarga(publicarDefinitivas, $('btnPublicar'));
 }
 
 async function publicarDefinitivas(){
-  if(!periodoAbierto(notaTerm)) return toast('El periodo está cerrado.', true);
+  // El estado del periodo se vuelve a consultar al servidor justo antes de publicar:
+  // coordinación pudo cerrarlo mientras el profesor llenaba la planilla.
+  try{
+    const cfg = await getDoc(DOC_CONFIG);
+    DB.estadoTerms = cfg.exists() ? (cfg.data().estadoTerms || {}) : {};
+  }catch(e){ console.error(e); }
+  if(!periodoAbierto(notaTerm)){
+    await confirmDialog('Periodo cerrado',
+      `Coordinación cerró el periodo ${notaTerm}. Lo que escribiste no se publicó y las notas siguen como estaban.\n\nPide que lo reabran si necesitas corregir.`,
+      'Entendido', true);
+    return panelMateria();
+  }
   const cambios = [];
   let invalidas = 0;
   studentsIn(notaCurso).forEach(st=>{
@@ -1648,12 +1712,21 @@ async function publicarDefinitivas(){
   toast(invalidas ? `${cambios.length} publicadas · ${invalidas} fuera de rango` : `${cambios.length} nota(s) publicadas`);
   panelMateria();
 
-  guardarDefinitivas(curso, materia, term, cambios).then(ok=>{
+  guardarDefinitivas(curso, materia, term, cambios).then(async ok=>{
     if(ok) return;
     previo.forEach(v=>{                       // el servidor las rechazó: se devuelven
       setMark(v.st.id, term, materia, v.valor);
       setObs(v.st.id, term, materia, v.obsTxt);
     });
+    try{                                      // puede haberse cerrado justo ahora
+      const cfg = await getDoc(DOC_CONFIG);
+      DB.estadoTerms = cfg.exists() ? (cfg.data().estadoTerms || {}) : {};
+    }catch(e){}
+    await confirmDialog('Las notas no se guardaron',
+      periodoAbierto(term)
+        ? `El servidor rechazó ${cambios.length} nota(s) de ${materia} en ${curso}. Se dejaron como estaban.`
+        : `Coordinación cerró el periodo ${term} mientras publicabas. Ninguna nota quedó guardada: la pantalla ya muestra los valores reales.`,
+      'Entendido', true);
     if(notaMateria === materia && notaTerm === term && notaCurso === curso) panelMateria();
   });
 }
@@ -1799,7 +1872,7 @@ function renderReportes(main){
       $('repBody').value = editing.body;
       $('btnCancelReport').onclick = ()=>{ editingReport = null; renderReportes(main); };
     }
-    if(profe) $('btnSaveReport').onclick = saveReport;
+    if(profe) $('btnSaveReport').onclick = ()=> conCarga(saveReport, $('btnSaveReport'));
     $('repFCurso').onchange = ()=>{
       const c = $('repFCurso').value, ss = $('repFStudent');
       ss.innerHTML = '<option value="">Todos</option>' +
@@ -1997,7 +2070,7 @@ function renderAdmin(main){
   drawAcudientes();
   $('acQuery').oninput = ()=>{ acQuery = $('acQuery').value; drawAcudientes(); };
   $('uQuery').oninput = ()=>{ uQuery = $('uQuery').value; drawUsers(); };
-  $('btnAddAcudiente').onclick = addAcudiente;
+  $('btnAddAcudiente').onclick = ()=> conCarga(addAcudiente, $('btnAddAcudiente'));
 
   fillStudents($('uStudent'), $('uCurso').value);
   linkCourse('uCurso','uStudent');
@@ -2011,9 +2084,9 @@ function renderAdmin(main){
   };
   $('admFCurso').onchange = ()=>{ admCurso = $('admFCurso').value; drawStudents(); };
   $('admSearch').oninput = ()=>{ admQuery = $('admSearch').value; drawStudents(); };
-  $('btnAddStudent').onclick = addStudent;
+  $('btnAddStudent').onclick = ()=> conCarga(addStudent, $('btnAddStudent'));
   $('btnAddSubject').onclick = addSubject;
-  $('btnAddUser').onclick = addUser;
+  $('btnAddUser').onclick = ()=> conCarga(addUser, $('btnAddUser'));
   drawStudents(); drawSubjects(); drawUsers();
 }
 
@@ -2058,8 +2131,17 @@ function drawStudents(){
     if(nuevo === null) return;
     const c = String(nuevo).trim();
     if(!COURSES.includes(c)) return toast('Ese curso no existe. Van de 101 a 1106.', true);
+    const antes = s.curso;
     s.curso = c;
-    await save(); toast(`${s.name} pasó al curso ${c}`); renderAdmin($('main'));
+    DB.users.forEach(u=>{
+      (u.hijos||[]).forEach(h=>{ if(h.id === s.id) h.curso = c; });
+    });
+    try{                                    // el documento de notas guarda su curso para las reglas
+      await setDoc(doc(COL_NOTAS, s.id), { curso: c }, { merge:true });
+    }catch(e){ console.error('No se pudo mover el curso de las notas:', e); }
+    await save();
+    toast(`${s.name} pasó de ${antes} a ${c}`);
+    renderAdmin($('main'));
   });
   $('stBody').querySelectorAll('[data-ds]').forEach(b=>b.onclick = async ()=>{
     const s = studentById(b.dataset.ds);
@@ -2070,7 +2152,13 @@ function drawStudents(){
     delete DB.marks[s.id];
     delete DB.obs[s.id];
     DB.reports = DB.reports.filter(r=>r.studentId!==s.id);
-    DB.users.forEach(u=>{ u.studentIds = (u.studentIds||[]).filter(id=>id!==s.id); });
+    DB.users.forEach(u=>{
+      u.studentIds = (u.studentIds||[]).filter(id=>id!==s.id);
+      u.hijos = (u.hijos||[]).filter(h=>h.id!==s.id);      // la copia de la familia también
+    });
+    DB.acudientes.forEach(a=>{ a.studentIds = (a.studentIds||[]).filter(id=>id!==s.id); });
+    try{ await deleteDoc(doc(COL_NOTAS, s.id)); }          // las notas viven aparte: hay que borrarlas
+    catch(e){ console.error('No se pudieron borrar las notas:', e); }
     await save(); toast('Estudiante eliminado'); renderAdmin($('main'));
   });
 }
@@ -2166,7 +2254,7 @@ function drawAcudientes(){
       </td></tr>`;
   }).join('') : '<tr><td colspan="5" class="empty">Todavía no hay acudientes autorizados.</td></tr>';
 
-  $('acBody').querySelectorAll('[data-acc]').forEach(b=>b.onclick = async ()=>{
+  $('acBody').querySelectorAll('[data-acc]').forEach(b=>b.onclick = ()=> conCarga(async ()=>{
     const a = DB.acudientes.find(x=>x.cedula===b.dataset.acc);
     if(!a) return;
     const nombre = prompt('Nombre completo del acudiente (cédula ' + a.cedula + '):', a.nombre || '');
@@ -2199,7 +2287,7 @@ function drawAcudientes(){
     await confirmDialog('Cuenta creada',
       `Entrega estos datos a ${nuevo.name}:\n\nCódigo: ${code}\nContraseña temporal: ${clave}\n\nDebe cambiarla al entrar. Esta pantalla no se vuelve a mostrar.`,
       'Entendido', true);
-  });
+  }, b));
 
   $('acBody').querySelectorAll('[data-acb]').forEach(b=>b.onclick = async ()=>{
     const a = DB.acudientes.find(x=>x.cedula===b.dataset.acb);
@@ -2385,7 +2473,7 @@ function renderCuenta(main){
 `;
 
   if($('btnSaveCursos')){
-    $('btnSaveCursos').onclick = async ()=>{
+    $('btnSaveCursos').onclick = ()=> conCarga(async ()=>{
       const cursos = [...document.querySelectorAll('.cCur:checked')].map(i=>i.value);
       currentUser.cursos = cursos;
       const yo3 = DB.users.find(u=>u.id===currentUser.id);
@@ -2393,7 +2481,7 @@ function renderCuenta(main){
       await guardarMisCursos(cursos);
       toast(cursos.length ? `Guardado: ${cursos.length} curso(s)` : 'Quedaste sin cursos asignados');
       renderCuenta(main);
-    };
+    }, $('btnSaveCursos'));
   }
 
   if($('btnSaveHorario')){
