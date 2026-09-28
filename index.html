@@ -1528,6 +1528,21 @@ async function sendMessage(){
     return toast('Fuera del horario de atención. ' + textoHorario(otro), true);
   }
   input.value = '';
+  try{
+    await conPermiso(()=> addDoc(COL_MSG, {
+      from: currentUser.id,
+      to: activeContact,
+      text,
+      time: nowStamp(),
+      orden: Date.now()
+    }));
+  }catch(e){
+    console.error('No se pudo enviar el mensaje:', e);
+    toast('No se pudo enviar: ' + (e.code || e.message), true);
+    input.value = text;   // no se pierde lo que escribiste
+  }
+}
+  input.value = '';
   // No esperamos nada: Firestore lo pinta al instante y lo sincroniza en segundo plano
   addDoc(COL_MSG, {
     from: currentUser.id,
