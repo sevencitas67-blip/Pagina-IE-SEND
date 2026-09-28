@@ -15,7 +15,7 @@
     --pen:#3E6EA8; --pen-dark:#2A5183;
     --text:#1C2433; --text-soft:#5A6478;
     --line:#CBD2DC; --red:#A63D46; --green:#2F7A86;
-    --radius:10px; --shadow:0 8px 24px rgba(22,36,61,0.14);
+    --radius:10px; --shadow:0 3px 14px rgba(22,36,61,0.08);
   }
   *{box-sizing:border-box;}
   html,body{height:100%;}
@@ -32,17 +32,16 @@
   .gate{
     min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
     background:
-      radial-gradient(circle at 15% 20%, rgba(200,135,63,0.10), transparent 45%),
-      radial-gradient(circle at 85% 80%, rgba(62,110,168,0.20), transparent 50%),
+      radial-gradient(circle at 50% 0%, rgba(62,110,168,0.12), transparent 55%),
       var(--ink);
   }
   .gate[hidden]{display:none;}
-  .id-card{width:100%; max-width:450px; background:var(--paper); border-radius:14px; box-shadow:0 30px 60px rgba(0,0,0,0.35); overflow:hidden; border:1px solid rgba(0,0,0,0.06);}
+  .id-card{width:100%; max-width:450px; background:var(--paper); border-radius:14px; box-shadow:0 12px 32px rgba(0,0,0,0.20); overflow:hidden; border:1px solid rgba(0,0,0,0.06);}
   .id-card__top{background:var(--ink); color:var(--paper); padding:22px 26px; display:flex; align-items:center; gap:14px;}
   .id-card__badge{width:44px;height:44px;border-radius:50%; background:var(--amber); display:flex;align-items:center;justify-content:center; font-family:'Bitter',serif; font-weight:800; font-size:18px; color:var(--ink); flex-shrink:0;}
   .id-card__top h1{margin:0; font-size:20px; color:var(--paper);}
   .id-card__top p{margin:2px 0 0; font-size:12.5px; color:#CCD5E2;}
-  .id-card__body{padding:26px;}
+  .id-card__body{padding:28px;}
   .field-label{font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-soft); font-weight:600; margin-bottom:7px; display:block;}
   .txt{width:100%; padding:12px 14px; border-radius:8px; border:1.5px solid var(--line); font-size:14.5px; background:#fff; color:var(--text); margin-bottom:16px;}
   .txt.code{font-family:'IBM Plex Mono',monospace; letter-spacing:.06em; text-transform:uppercase; font-weight:600;}
@@ -64,8 +63,8 @@
   /* ---------- SHELL ---------- */
   .app{display:none;}
   .app.active{display:flex; height:100vh; height:100dvh; overflow:hidden;}
-  .spine{width:20px; background:var(--ink); position:relative; flex-shrink:0; background-image:repeating-linear-gradient(to bottom, transparent 0 22px, rgba(0,0,0,0.25) 22px 24px);}
-  .spine span{position:absolute; width:10px;height:10px;border-radius:50%; background:var(--paper-dark); left:5px;}
+  .spine{width:20px; background:var(--ink); position:relative; flex-shrink:0; background-image:repeating-linear-gradient(to bottom, transparent 0 22px, rgba(0,0,0,0.18) 22px 24px);}
+  .spine span{position:absolute; width:9px;height:9px;border-radius:50%; background:var(--paper-dark); left:5.5px;}
   .sidebar{width:238px; flex-shrink:0; background:var(--ink); color:var(--paper); display:flex; flex-direction:column; padding:26px 0; height:100%; overflow-y:auto;}
   .sidebar__user{padding:0 22px 20px; border-bottom:1px solid rgba(255,255,255,0.12); margin-bottom:12px;}
   .sidebar__user .name{font-family:'Bitter',serif; font-weight:700; font-size:16px; line-height:1.25;}
@@ -73,7 +72,7 @@
   .role-pill{display:inline-block; margin-top:8px; font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; padding:3px 9px; border-radius:20px; font-weight:700;}
   .role-pill.profesor{background:var(--amber); color:var(--ink);}
   .role-pill.familia{background:var(--pen); color:#fff;}
-  .role-pill.coordinador{background:var(--ink); color:var(--paper);}
+  .role-pill.coordinador{background:var(--paper); color:var(--ink);}
   .version{display:inline-block; margin-left:6px; font-size:10px; color:#94A0B5;
     font-family:'IBM Plex Mono',monospace;}
   .tab-btn{display:flex; align-items:center; gap:11px; padding:12px 22px; color:#CCD5E2; font-size:14px; font-weight:500; border:none; background:none; text-align:left; width:100%; border-left:3px solid transparent; transition:background .12s ease;}
@@ -84,10 +83,10 @@
   .logout button{width:100%; background:transparent; border:1px solid rgba(255,255,255,0.25); color:#CCD5E2; padding:10px; border-radius:8px; font-size:13px;}
   .logout button:hover{border-color:var(--amber); color:var(--amber);}
 
-  .main{flex:1; padding:34px 40px 60px; overflow-y:auto; height:100%; min-width:0;}
+  .main{flex:1; padding:40px 46px 64px; overflow-y:auto; height:100%; min-width:0;}
   .main h2{margin:0 0 4px; font-size:26px; color:var(--ink);}
   .subtitle{color:var(--text-soft); font-size:14px; margin-bottom:26px; line-height:1.5;}
-  .card{background:var(--paper); border-radius:var(--radius); box-shadow:var(--shadow); padding:22px; margin-bottom:18px;}
+  .card{background:var(--paper); border-radius:var(--radius); box-shadow:var(--shadow); padding:26px; margin-bottom:18px;}
   .card h3{margin:0 0 16px; font-size:16px; color:var(--ink);}
   .card-head{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;}
   .card-head h3{margin:0;}
@@ -198,7 +197,7 @@
   .prom{font-family:'IBM Plex Mono',monospace; font-weight:700; padding:3px 8px; border-radius:6px; background:var(--paper-dark); color:var(--ink);}
   .prom.bad{background:rgba(180,68,58,.12); color:var(--red);}
 
-  .grade-stamp{display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:50%; border:2.5px solid var(--red); color:var(--red); font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13px; transform:rotate(-6deg);}
+  .grade-stamp{display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:50%; border:2px solid var(--red); color:var(--red); font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12.5px; transform:rotate(-4deg);}
   .grade-stamp.good{border-color:var(--ink); color:var(--ink);}
   .locked-banner{display:flex; align-items:center; gap:10px; background:var(--paper-dark); border-radius:8px; padding:13px 16px; font-size:13px; color:var(--text-soft); margin-bottom:18px; border:1px dashed var(--line);}
   .stat-strip{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px;}
@@ -207,10 +206,10 @@
   .stat .v{font-family:'Bitter',serif; font-size:26px; font-weight:800; color:var(--ink); margin-top:4px;}
   .stat .v.bad{color:var(--red);}
   .tag{display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:3px 8px; border-radius:20px; background:var(--paper-dark); color:var(--text-soft);}
-  .tag.profesor{background:var(--amber); color:var(--ink);}
-  .tag.familia{background:var(--pen); color:#fff;}
-  .tag.coordinador{background:var(--ink); color:var(--paper);}
-  .curso-chip{display:inline-block; font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px; padding:3px 9px; border-radius:6px; background:var(--ink); color:var(--paper); letter-spacing:.04em;}
+  .tag.profesor{background:rgba(200,135,63,0.15); color:var(--amber-dark);}
+  .tag.familia{background:rgba(62,110,168,0.12); color:var(--pen-dark);}
+  .tag.coordinador{background:rgba(22,36,61,0.08); color:var(--ink);}
+  .curso-chip{display:inline-block; font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12px; padding:3px 9px; border-radius:6px; background:var(--paper-dark); color:var(--ink); letter-spacing:.04em; border:1px solid var(--line);}
   .code-cell{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12.5px; color:var(--ink);}
 
   /* boletín editable */
@@ -221,13 +220,13 @@
   .sticky-save{position:sticky; bottom:0; background:var(--paper); padding-top:14px; margin-top:6px; border-top:1px solid var(--line); display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
 
   /* ---------- MODAL + TOAST ---------- */
-  .modal-bg{position:fixed; inset:0; background:rgba(30,58,52,.55); display:flex; align-items:center; justify-content:center; padding:20px; z-index:60;}
+  .modal-bg{position:fixed; inset:0; background:rgba(22,36,61,.5); display:flex; align-items:center; justify-content:center; padding:20px; z-index:60;}
   .modal-bg[hidden]{display:none;}
-  .modal{background:var(--paper); border-radius:12px; padding:24px; max-width:420px; width:100%; box-shadow:0 24px 50px rgba(0,0,0,.3);}
+  .modal{background:var(--paper); border-radius:12px; padding:24px; max-width:420px; width:100%; box-shadow:0 16px 40px rgba(0,0,0,.22);}
   .modal h3{margin:0 0 10px; font-size:18px;}
   .modal p{margin:0 0 18px; font-size:13.5px; line-height:1.55; color:var(--text-soft); white-space:pre-line;}
   .modal-actions{display:flex; gap:10px; justify-content:flex-end;}
-  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:12px 22px; border-radius:24px; font-size:13.5px; font-weight:500; box-shadow:0 10px 30px rgba(0,0,0,.3); z-index:80;}
+  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:12px 22px; border-radius:24px; font-size:13.5px; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,.22); z-index:80;}
   .toast[hidden]{display:none;}
   .toast.warn{background:var(--red);}
   .boot{min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--ink); color:#CCD5E2; font-size:14px;}
@@ -937,7 +936,7 @@ const FIJOS = [
    DATOS SEMILLA
    ===================================================================== */
 const DEMO_PASS = 'clave123';
-const VERSION = 'v13';
+const VERSION = 'v14';
 const COORD_CODE = 'COO-1001';
 const COORD_PASS = 'coordinacion';
 const DEMO_ANSWER = 'cuaderno';
@@ -1216,13 +1215,6 @@ async function doLogin(){
 const soloDigitos = t => String(t||'').replace(/\D/g,'');
 let regAcudiente = null;
 
-const _regDeshabilitado = ()=>{
-  showAlert('regAlert','');
-  $('regStep1').hidden = false; $('regStep2').hidden = true; $('regStep3').hidden = true;
-  $('regCedula').value=''; $('regNombre').value=''; $('regPass').value=''; $('regPass2').value='';
-  regAcudiente = null;
-  gate('viewRegistro');
-};
 $('btnRegVolver').onclick = ()=>{ showAlert('loginAlert',''); gate('viewLogin'); };
 $('regCedula').onkeydown = e => { if(e.key==='Enter') $('btnRegNext').click(); };
 
@@ -1266,13 +1258,6 @@ $('btnRegSave').onclick = async ()=>{
   $('regStep2').hidden = true; $('regStep3').hidden = false;
 };
 
-const _forgotDeshabilitado = ()=>{
-  showAlert('forgotAlert','');
-  $('forgotStep1').hidden = false; $('forgotStep2').hidden = true;
-  $('fgCode').value=''; $('fgAnswer').value=''; $('fgNew').value=''; $('fgNew2').value='';
-  fgUser = null;
-  gate('viewForgot');
-};
 $('btnBackLogin').onclick = ()=>{ showAlert('loginAlert',''); gate('viewLogin'); };
 $('btnFgNext').onclick = ()=>{
   const code = $('fgCode').value.trim().toUpperCase();
@@ -1397,7 +1382,7 @@ function showTab(tab){
 }
 
 /* =====================================================================
-   MENSAJERÍA · solo profesores
+   MENSAJERÍA · profesores entre sí, y familias con profesores (dentro de horario)
    ===================================================================== */
 /* ---------- Horarios de atención ---------- */
 const DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
@@ -1542,19 +1527,9 @@ async function sendMessage(){
     input.value = text;   // no se pierde lo que escribiste
   }
 }
-  input.value = '';
-  // No esperamos nada: Firestore lo pinta al instante y lo sincroniza en segundo plano
-  addDoc(COL_MSG, {
-    from: currentUser.id,
-    to: activeContact,
-    text,
-    time: nowStamp(),
-    orden: Date.now()
-  }).catch(e => { console.error(e); toast('El mensaje no se pudo enviar', true); });
-}
 
 /* =====================================================================
-   CURSOS · planilla del curso con las 14 materias
+   CURSOS · horario de clases del profesor
    ===================================================================== */
 const DIAS_CLASE = ['Lunes','Martes','Miércoles','Jueves','Viernes'];
 const HORAS_CLASE = ['1ª','2ª','3ª','4ª','5ª','6ª'];
@@ -1819,6 +1794,8 @@ function panelDireccion(){
   $('dTerm').onchange = ()=>{ notaTerm = $('dTerm').value; panelDireccion(); };
 }
 
+/* --------- Notas para la familia (solo lectura) --------- */
+let famTerm = TERM_ACTUAL, famStudent = null;
 function renderNotasFamilia(main){
   const hijos = myStudents();
   if(!hijos.length){
@@ -1986,7 +1963,7 @@ async function saveReport(){
 }
 
 /* =====================================================================
-   ADMINISTRACIÓN · solo profesores
+   ADMINISTRACIÓN · solo coordinación
    ===================================================================== */
 let admCurso = null, admQuery = '', acQuery = '', uQuery = '';
 function renderAdmin(main){
