@@ -417,17 +417,15 @@ async function crearCuentaAuth(code, pass){
    y las reglas del servidor deciden quién puede tocar cada una:
 
      usuarios/{uid}        cuenta de cada persona (rol, hijos)
-     directorio/{uid}      perfil visible de cada profesor (materia, horario)
-     colegio/config        materias y periodos
+     directorio/{uid}      perfil visible de cada profesor (horario de atención)
+     colegio/config        ajustes generales del portal
      colegio/estudiantes   nómina completa · solo el colegio
-     notas/{idEstudiante}  notas y observaciones de UN estudiante
      reportes/{id}         un reporte, con el estudiante al que pertenece
      acudientes/{cedula}   cédulas autorizadas · solo coordinación
      mensajes/{id}         un mensaje, con remitente y destinatario
    ===================================================================== */
 const COL_USUARIOS   = collection(nube, 'usuarios');
 const COL_DIRECTORIO = collection(nube, 'directorio');
-const COL_NOTAS      = collection(nube, 'notas');
 const COL_REPORTES   = collection(nube, 'reportes');
 const COL_ACUDIENTES = collection(nube, 'acudientes');
 const COL_MSG        = collection(nube, 'mensajes');
@@ -494,7 +492,6 @@ async function cargarTodo(uid){
   const directorio = dir.docs.map(d => ({ id:d.id, role:'profesor', ...d.data() }));
 
   const base = {
-    subjects: (config.subjects && config.subjects.length) ? config.subjects : SUBJECTS.slice(),
     limpiar: config.limpiar || [],
     students: [], users: [], acudientes: [], reports: [], messages: []
   };
@@ -531,7 +528,7 @@ async function cargarTodo(uid){
 
 function guardarEspejo(d){
   espejo = {
-    config: { subjects: d.subjects, limpiar: d.limpiar||[] },
+    config: { limpiar: d.limpiar||[] },
     students: copia(d.students), users: copia(d.users),
     acudientes: copia(d.acudientes), reports: copia(d.reports),
   };
@@ -545,7 +542,7 @@ async function save(){
 
   if(isCoord()){
     // Se escribe con merge para no borrar lo que no le corresponde.
-    const cfg = {subjects:DB.subjects, limpiar:DB.limpiar||[]};
+    const cfg = {limpiar:DB.limpiar||[]};
     if(!igual(espejo.config, cfg)) tareas.push(setDoc(DOC_CONFIG, cfg, { merge:true }));
     if(!igual(espejo.students, DB.students))
       tareas.push(setDoc(DOC_NOMINA, {students: DB.students}));
@@ -571,7 +568,7 @@ async function save(){
   }
 
   if(isProfe()){
-    const perfil = { name: currentUser.name, subjects: currentUser.subjects || [], horario: currentUser.horario || null };
+    const perfil = { name: currentUser.name, horario: currentUser.horario || null };
     if(!igual(espejo.perfil, perfil)){
       tareas.push(setDoc(doc(COL_DIRECTORIO, currentUser.id), perfil));
       espejo.perfil = copia(perfil);
@@ -647,7 +644,7 @@ async function diagnostico(){
   await probar('CREAR una cuenta nueva', async ()=>{
     const ref = doc(COL_USUARIOS, 'prueba_diagnostico');
     await setDoc(ref, { code:'ZZZ-0000', name:'Prueba', role:'profesor',
-                        subjects:[], director:'', cursos:[], studentIds:[], hijos:[] });
+                        cursos:[], studentIds:[], hijos:[] });
     await deleteDoc(ref);
     return 'crear y borrar aceptado';
   });
@@ -722,7 +719,6 @@ async function borrarTodo(line = ()=>{}){
   const grupos = [
     ['cuentas',    COL_USUARIOS],
     ['directorio', COL_DIRECTORIO],
-    ['notas',      COL_NOTAS],
     ['reportes',   COL_REPORTES],
     ['acudientes', COL_ACUDIENTES],
     ['mensajes',   COL_MSG],
@@ -937,15 +933,6 @@ function linkCourse(courseId, studentId, onChange){
 function defaultCourse(){ const v = cursosVisibles(); return v.find(c=>courseCount(c) > 0) || v[0] || '101'; }
 
 /* =====================================================================
-   MATERIAS
-   ===================================================================== */
-const SUBJECTS = [
-  'Matemáticas','Química','Física','Ética','Religión','Español','Inglés',
-  'Informática','Semillero-Profundización','Educación Física','Sociales',
-  'Filosofía','Economía','Artes'
-];
-
-/* =====================================================================
    NÓMINA INICIAL · 32 a 40 estudiantes por curso
    ===================================================================== */
 const NOMBRES = [
@@ -968,7 +955,6 @@ const FIJOS = [
   {id:'st_juan',  name:'Juan Pérez',     curso:'602'},
   {id:'st_sofia', name:'Sofía Torres',   curso:'801'},
 ];
-/* Notas iniciales: las 14 materias del periodo en curso para cada estudiante */
 
 /* =====================================================================
    DATOS SEMILLA
@@ -1000,13 +986,9 @@ const isCoord   = () => currentUser && currentUser.role === 'coordinador';
 const isStaff   = () => isProfe() || isCoord();          // profesor o coordinador
 const isFamilia = () => currentUser && currentUser.role === 'familia';
 const misCursos    = () => (currentUser.cursos || []);
-const miDireccion  = () => currentUser.director || '';
-const dirijoCurso  = c => !!miDireccion() && miDireccion() === c;
 const cursosVisibles = () => {
   if(!currentUser || !isProfe()) return COURSES.slice();
-  const set = new Set(currentUser.cursos || []);
-  if(currentUser.director) set.add(currentUser.director);
-  return COURSES.filter(c => set.has(c));
+  return COURSES.filter(c => (currentUser.cursos||[]).includes(c));
 };
 const nombreRol = r => r === 'coordinador' ? 'Coordinación' : r === 'profesor' ? 'Profesor' : 'Familia';
 const myStudents = () => (currentUser.studentIds||[]).map(studentById).filter(Boolean);
@@ -1449,16 +1431,14 @@ function renderMensajeria(main){
       <div class="nm">${esc(c.name)}<span class="dot"></span></div>
       <div class="subj">${last
         ? esc(last.text.slice(0,28)) + (last.text.length>28?'…':'')
-        : esc(c.role==='profesor' ? ((c.subjects||[]).join(', ') || 'Profesor') : nombreRol(c.role))}</div>
+        : esc(nombreRol(c.role))}</div>
     </button>`;
   }).join('');
   $('contacts').querySelectorAll('.contact').forEach(b=>{
     b.onclick = ()=>{ activeContact = b.dataset.id; renderMensajeria(main); };
   });
   const c = userById(activeContact);
-  $('threadHead').textContent = c
-    ? `${c.name} · ${c.role==='profesor' ? ((c.subjects||[]).join(', ') || 'Profesor') : nombreRol(c.role)}`
-    : '';
+  $('threadHead').textContent = c ? `${c.name} · ${nombreRol(c.role)}` : '';
   $('btnSend').onclick = sendMessage;
   $('msgInput').onkeydown = e => { if(e.key==='Enter') sendMessage(); };
   $('msgInput').oninput = marcarEscribiendo;
@@ -1537,7 +1517,7 @@ const HORAS_CLASE = ['1ª','2ª','3ª','4ª','5ª','6ª'];
 
 function renderCursos(main){
   if(!isProfe()) return;
-  const cursos = [...new Set([...(currentUser.cursos||[]), currentUser.director].filter(Boolean))];
+  const cursos = currentUser.cursos || [];
   const horario = currentUser.horarioClases || {};
 
   main.innerHTML = `
@@ -1569,11 +1549,10 @@ function renderCursos(main){
     <div class="card">
       <div class="card-head"><h3>Resumen por curso</h3></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Curso</th><th>Horas por semana</th><th>Estudiantes</th><th>Rol</th></tr></thead>
+        <thead><tr><th>Curso</th><th>Horas por semana</th><th>Estudiantes</th></tr></thead>
         <tbody>${cursos.map(c=>{
           const horas = Object.values(horario).filter(v=>v===c).length;
-          return `<tr><td><b>${esc(c)}</b></td><td>${horas}</td><td>${courseCount(c)}</td>
-            <td>${c===currentUser.director ? '<span class="tag familia">Director de curso</span>' : (currentUser.subjects||[]).join(', ') || '—'}</td></tr>`;
+          return `<tr><td><b>${esc(c)}</b></td><td>${horas}</td><td>${courseCount(c)}</td></tr>`;
         }).join('')}</tbody>
       </table></div>
     </div>`
@@ -1724,12 +1703,11 @@ function renderAdmin(main){
   if(!admCurso) admCurso = defaultCourse();
   main.innerHTML = `
     <h2>Administración</h2>
-    <p class="subtitle">Estudiantes por curso, materias y cuentas de acceso del colegio.</p>
+    <p class="subtitle">Estudiantes por curso y cuentas de acceso del colegio.</p>
 
     <div class="stat-strip">
       <div class="stat"><div class="k">Estudiantes</div><div class="v">${DB.students.length}</div></div>
       <div class="stat"><div class="k">Cursos</div><div class="v">${COURSES.length}</div></div>
-      <div class="stat"><div class="k">Materias</div><div class="v">${DB.subjects.length}</div></div>
       <div class="stat"><div class="k">Cuentas</div><div class="v">${DB.users.length}</div></div>
     </div>
 
@@ -1756,18 +1734,6 @@ function renderAdmin(main){
         <tbody id="stBody"></tbody></table>
       </div>
       <p class="hint" id="stCount"></p>
-    </div>
-
-    <div class="card">
-      <div class="card-head"><h3>Materias</h3></div>
-      <div class="grid">
-        <div class="form-row"><label for="subName">Nueva materia</label><input id="subName" type="text" placeholder="Ej: Emprendimiento"></div>
-      </div>
-      <button class="btn" id="btnAddSubject">Agregar materia</button>
-      <div class="table-wrap" style="margin-top:18px">
-        <table><thead><tr><th>Materia</th><th></th></tr></thead>
-        <tbody id="subBody"></tbody></table>
-      </div>
     </div>
 
     <div class="card">
@@ -1816,10 +1782,6 @@ function renderAdmin(main){
         <div class="form-row"><label for="uRole">Tipo de cuenta</label>
           <select id="uRole"><option value="profesor">Profesor</option><option value="coordinador">Coordinación</option></select></div>
         <div class="form-row"><label for="uName">Nombre</label><input id="uName" type="text" placeholder="Nombre completo"></div>
-        <div class="form-row" id="wrapSubject" style="grid-column:1/-1"><label>Materias que dicta</label>
-          <div class="chips-check">${DB.subjects.map((m,i)=>`<label><input type="checkbox" class="uMat" value="${esc(m)}"> ${esc(m)}</label>`).join('')}</div></div>
-        <div class="form-row" id="wrapDirector"><label for="uDirector">Director de curso (opcional)</label>
-          <select id="uDirector"><option value="">Ninguno</option>${COURSES.map(c=>`<option value="${c}">${c}</option>`).join('')}</select></div>
         <div class="form-row" id="wrapCurso" hidden><label for="uCurso">Curso del estudiante</label>
           <select class="curso" id="uCurso">${courseOptions(admCurso)}</select></div>
         <div class="form-row" id="wrapStudent" hidden><label for="uStudent">Estudiante vinculado</label>
@@ -1832,7 +1794,7 @@ function renderAdmin(main){
 
       <h4 class="sub-head">Coordinación y profesores <span id="uCountP"></span></h4>
       <div class="table-wrap">
-        <table><thead><tr><th>Código</th><th>Nombre</th><th>Materia / rol</th><th></th></tr></thead>
+        <table><thead><tr><th>Código</th><th>Nombre</th><th>Rol</th><th></th></tr></thead>
         <tbody id="uBodyP"></tbody></table>
       </div>
 
@@ -1855,18 +1817,14 @@ function renderAdmin(main){
   linkCourse('uCurso','uStudent');
   $('uRole').onchange = ()=>{
     const fam = $('uRole').value === 'familia';
-    const esProf = $('uRole').value === 'profesor';
-    $('wrapSubject').hidden = !esProf;
-    $('wrapDirector').hidden = !esProf;
     $('wrapCurso').hidden = !fam;
     $('wrapStudent').hidden = !fam;
   };
   $('admFCurso').onchange = ()=>{ admCurso = $('admFCurso').value; drawStudents(); };
   $('admSearch').oninput = ()=>{ admQuery = $('admSearch').value; drawStudents(); };
   $('btnAddStudent').onclick = ()=> conCarga(addStudent, $('btnAddStudent'));
-  $('btnAddSubject').onclick = addSubject;
   $('btnAddUser').onclick = ()=> conCarga(addUser, $('btnAddUser'));
-  drawStudents(); drawSubjects(); drawUsers();
+  drawStudents(); drawUsers();
 }
 
 function drawStudents(){
@@ -1929,8 +1887,6 @@ function drawStudents(){
       u.hijos = (u.hijos||[]).filter(h=>h.id!==s.id);      // la copia de la familia también
     });
     DB.acudientes.forEach(a=>{ a.studentIds = (a.studentIds||[]).filter(id=>id!==s.id); });
-    try{ await deleteDoc(doc(COL_NOTAS, s.id)); }          // por si quedó alguna nota vieja de antes
-    catch(e){ /* no había nada que borrar ahí, no pasa nada */ }
     await save(); toast('Estudiante eliminado'); renderAdmin($('main'));
   });
 }
@@ -1943,28 +1899,6 @@ async function addStudent(){
   await save();
   toast(`${name} matriculado en ${curso}`);
   renderAdmin($('main'));
-}
-
-function drawSubjects(){
-  $('subBody').innerHTML = DB.subjects.length ? DB.subjects.map(s=>`
-    <tr><td>${esc(s)}</td>
-    <td><button class="btn danger tiny" data-dsub="${esc(s)}">Quitar</button></td></tr>`).join('')
-    : '<tr><td colspan="2" class="empty">No hay materias registradas.</td></tr>';
-
-  $('subBody').querySelectorAll('[data-dsub]').forEach(b=>b.onclick = async ()=>{
-    const s = b.dataset.dsub;
-    const ok = await confirmDialog('Quitar materia', `${s} se quitará de la lista.`, 'Quitar');
-    if(!ok) return;
-    DB.subjects = DB.subjects.filter(x=>x!==s);
-    await save(); toast('Materia quitada'); renderAdmin($('main'));
-  });
-}
-async function addSubject(){
-  const name = $('subName').value.trim();
-  if(!name) return toast('Escribe el nombre de la materia.', true);
-  if(DB.subjects.some(s=>norm(s)===norm(name))) return toast('Esa materia ya existe.', true);
-  DB.subjects.push(name);
-  await save(); toast('Materia agregada'); renderAdmin($('main'));
 }
 
 function hijosDe(ids){
@@ -2115,7 +2049,7 @@ function drawUsers(){
   const q = norm(uQuery);
   const coincide = u => {
     if(!q) return true;
-    const extra = u.role==='profesor' ? ((u.subjects||[]).join(' ') + ' ' + (u.director||''))
+    const extra = u.role==='profesor' ? (u.cursos||[]).join(' ')
       : (u.studentIds||[]).map(id=>`${studentName(id)} ${studentCourse(id)}`).join(' ');
     return norm(u.name).includes(q) || norm(u.code).includes(q) || norm(extra).includes(q);
   };
@@ -2123,9 +2057,7 @@ function drawUsers(){
       <td class="code-cell">${esc(u.code)}</td>
       <td>${esc(u.name)}${u.id===currentUser.id?' <span class="tag">tú</span>':''}</td>
       <td>${u.role==='coordinador' ? 'Coordinación'
-        : u.role==='profesor' ? (esc((u.subjects||[]).join(', ') || 'sin materias')
-            + ((u.cursos||[]).length ? ` · cursos ${esc((u.cursos||[]).join(', '))}` : ' · sin cursos')
-            + (u.director ? ` · <b>director ${esc(u.director)}</b>` : ''))
+        : u.role==='profesor' ? ((u.cursos||[]).length ? `Cursos ${esc((u.cursos||[]).join(', '))}` : 'Sin cursos')
         : esc((u.studentIds||[]).map(id=>`${studentName(id)} · ${studentCourse(id)}`).join(', ') || 'Sin estudiante')}</td>
       <td style="white-space:nowrap">
         <button class="btn ghost tiny" data-rp="${u.id}">Restablecer contraseña</button>
@@ -2181,8 +2113,6 @@ async function addUser(){
   }
   const nuevo = {
     id: nuevoUid, code, name, role,
-    subjects: role === 'profesor' ? [...document.querySelectorAll('.uMat:checked')].map(i=>i.value) : [],
-    director: role === 'profesor' ? $('uDirector').value : '',
     cursos: [],
     studentIds, hijos: hijosDe(studentIds),
   };
@@ -2216,10 +2146,9 @@ Motivo: ${e.code || e.message}
    ===================================================================== */
 function renderCuenta(main){
   const vinculo = isCoord()
-    ? 'Acceso a administración y reportes. No ve las notas.'
+    ? 'Acceso a administración y reportes.'
     : isProfe()
-      ? `Profesor(a) de ${esc((currentUser.subjects||[]).join(', ') || 'materias sin asignar')}`
-        + (currentUser.director ? ` · director de curso ${esc(currentUser.director)}` : '')
+      ? ((currentUser.cursos||[]).length ? `Profesor(a) de los cursos ${esc((currentUser.cursos||[]).join(', '))}` : 'Profesor(a) · sin cursos asignados')
       : esc(myStudents().map(s=>`${s.name} · curso ${s.curso}`).join(', ') || 'Sin estudiante vinculado');
 
   main.innerHTML = `
@@ -2245,7 +2174,6 @@ function renderCuenta(main){
           ${(currentUser.cursos||[]).includes(c)?'checked':''}> ${c}</label>`).join('')}
       </div>
       <button class="btn" id="btnSaveCursos">Guardar mis cursos</button>
-      ${currentUser.director ? `<p class="hint">Eres director del curso ${esc(currentUser.director)}: ahí ves todas las materias, los reportes y los datos de los estudiantes. Esa asignación la hace coordinación.</p>` : '<p class="hint">La dirección de curso la asigna coordinación.</p>'}
     </div>
 
     <div class="card">
