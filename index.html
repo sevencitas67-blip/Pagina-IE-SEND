@@ -149,6 +149,11 @@
   .aviso-horario{font-size:11.5px; padding:7px 12px; border-radius:7px; margin-bottom:8px;
     background:#f7e9ec; color:#8A2F3A; border:1px solid #e0cdd2;}
   .aviso-horario.abierto{background:#e8f0f4; color:#1F5E7A; border-color:#c7dbe4;}
+  .escribiendo{display:flex; align-items:center; gap:4px; padding:6px 13px 10px; align-self:flex-start;}
+  .escribiendo span{width:6px; height:6px; border-radius:50%; background:var(--text-soft); opacity:.35; animation:puntito 1.2s infinite;}
+  .escribiendo span:nth-child(2){animation-delay:.2s;}
+  .escribiendo span:nth-child(3){animation-delay:.4s;}
+  @keyframes puntito{0%,60%,100%{opacity:.3; transform:translateY(0);} 30%{opacity:1; transform:translateY(-3px);}}
   .horario-dias{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
   .horario-dias label{display:flex; align-items:center; gap:5px; font-size:13px;
     padding:6px 10px; border:1px solid var(--line); border-radius:7px; cursor:pointer;}
@@ -444,6 +449,7 @@ const COL_NOTAS      = collection(nube, 'notas');
 const COL_REPORTES   = collection(nube, 'reportes');
 const COL_ACUDIENTES = collection(nube, 'acudientes');
 const COL_MSG        = collection(nube, 'mensajes');
+const COL_ESCRIBIENDO = collection(nube, 'escribiendo');
 const DOC_CONFIG     = doc(nube, 'colegio', 'config');
 const DOC_NOMINA     = doc(nube, 'colegio', 'estudiantes');
 
@@ -785,18 +791,58 @@ async function borrarTodo(line = ()=>{}){
    Dos escuchas: lo que envío y lo que recibo. El servidor no deja ver el resto. */
 function escucharCambios(){ /* cada colección se carga al entrar; el chat va aparte */ }
 
+/* Mensajes que ya salieron de este dispositivo pero el servidor todavía no confirma.
+   Se pintan de una vez; cuando el servidor los confirma (llegan por el listener con
+   el mismo tmpId), se retiran de aquí para no duplicarlos. */
+let pendientes = [];
+let mensajesConfirmados = { enviados: [], recibidos: [] };
+
+function refrescarMensajes(){
+  if(!DB) return;
+  const confirmados = [...mensajesConfirmados.enviados, ...mensajesConfirmados.recibidos];
+  const idsConfirmados = new Set(confirmados.filter(m=>m.tmpId).map(m=>m.tmpId));
+  pendientes = pendientes.filter(p => !idsConfirmados.has(p.tmpId));
+  DB.messages = [...confirmados, ...pendientes].sort((a,b)=>(a.orden||0)-(b.orden||0));
+  if(currentUser && activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
+}
+
 function escucharMensajes(){
-  const mios = { enviados: [], recibidos: [] };
-  const pintar = () => {
-    if(!DB) return;
-    DB.messages = [...mios.enviados, ...mios.recibidos].sort((a,b)=>(a.orden||0)-(b.orden||0));
-    if(currentUser && activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
-  };
   const mapear = snap => snap.docs.map(d => ({ id:d.id, ...d.data() }));
   onSnapshot(query(COL_MSG, where('from','==',currentUser.id)),
-    s => { mios.enviados = mapear(s); pintar(); }, e => console.error('Chat (enviados):', e));
+    s => { mensajesConfirmados.enviados = mapear(s); refrescarMensajes(); }, e => console.error('Chat (enviados):', e));
   onSnapshot(query(COL_MSG, where('to','==',currentUser.id)),
-    s => { mios.recibidos = mapear(s); pintar(); }, e => console.error('Chat (recibidos):', e));
+    s => { mensajesConfirmados.recibidos = mapear(s); refrescarMensajes(); }, e => console.error('Chat (recibidos):', e));
+}
+
+/* ---------- "Escribiendo…" ----------
+   Mientras hay texto en la caja, se avisa al otro con quién se habla.
+   Se borra el aviso al dejar de teclear 3s, al enviar, o al cambiar de conversación. */
+let escribiendoTimer = null;
+function marcarEscribiendo(){
+  if(!activeContact) return;
+  setDoc(doc(COL_ESCRIBIENDO, currentUser.id), { para: activeContact, en: Date.now() }).catch(()=>{});
+  clearTimeout(escribiendoTimer);
+  escribiendoTimer = setTimeout(quitarEscribiendo, 3000);
+}
+function quitarEscribiendo(){
+  clearTimeout(escribiendoTimer);
+  deleteDoc(doc(COL_ESCRIBIENDO, currentUser.id)).catch(()=>{});
+}
+let dejarDeEscucharEscribiendo = null;
+function escucharEscribiendo(contactId){
+  if(dejarDeEscucharEscribiendo) dejarDeEscucharEscribiendo();
+  if(!contactId) return;
+  dejarDeEscucharEscribiendo = onSnapshot(doc(COL_ESCRIBIENDO, contactId), snap => {
+    const ind = $('escribiendoIndic');
+    if(!ind) return;
+    const d = snap.exists() ? snap.data() : null;
+    const activo = !!(d && d.para === currentUser.id && (Date.now() - (d.en||0) < 6000));
+    ind.hidden = !activo;
+    if(activo){
+      const box = $('threadMsgs');
+      if(box) box.scrollTop = box.scrollHeight;
+    }
+  }, e => console.error('Escribiendo:', e));
 }
 
 /* ---------- Utilidades ---------- */
@@ -1447,6 +1493,7 @@ function renderMensajeria(main){
       <div class="thread">
         <div class="thread-head" id="threadHead"></div>
         <div class="thread-msgs" id="threadMsgs"></div>
+        <div class="escribiendo" id="escribiendoIndic" hidden><span></span><span></span><span></span></div>
         <div class="aviso-horario" id="avisoHorario" hidden></div>
         <div class="composer">
           <input id="msgInput" type="text" placeholder="Escribe un mensaje…" autocomplete="off">
@@ -1473,8 +1520,10 @@ function renderMensajeria(main){
     : '';
   $('btnSend').onclick = sendMessage;
   $('msgInput').onkeydown = e => { if(e.key==='Enter') sendMessage(); };
+  $('msgInput').oninput = marcarEscribiendo;
   renderThread();
   actualizarComposer();
+  escucharEscribiendo(activeContact);
   if($('msgInput') && !$('msgInput').disabled) $('msgInput').focus();
 }
 
@@ -1513,18 +1562,29 @@ async function sendMessage(){
     return toast('Fuera del horario de atención. ' + textoHorario(otro), true);
   }
   input.value = '';
+  quitarEscribiendo();
+
+  // Se pinta de una vez: el remitente lo ve al instante sin esperar al servidor.
+  const tmpId = uid('tmp');
+  const orden = Date.now();
+  pendientes.push({ id: tmpId, tmpId, from: currentUser.id, to: activeContact, text, time: nowStamp(), orden });
+  refrescarMensajes();
+
   try{
     await conPermiso(()=> addDoc(COL_MSG, {
       from: currentUser.id,
       to: activeContact,
       text,
       time: nowStamp(),
-      orden: Date.now()
+      orden,
+      tmpId
     }));
   }catch(e){
     console.error('No se pudo enviar el mensaje:', e);
+    pendientes = pendientes.filter(m => m.tmpId !== tmpId);
+    refrescarMensajes();
     toast('No se pudo enviar: ' + (e.code || e.message), true);
-    input.value = text;   // no se pierde lo que escribiste
+    input.value = text;
   }
 }
 
