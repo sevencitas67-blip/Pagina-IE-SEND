@@ -2118,6 +2118,12 @@ async function addUser(){
   };
   try{
     await crearFicha(nuevo);
+    // La familia solo ve profesores que estén en "directorio" — se crea de una vez
+    // para que aparezca en Mensajería sin esperar a que el profesor guarde algo primero.
+    if(role === 'profesor'){
+      try{ await setDoc(doc(COL_DIRECTORIO, nuevoUid), { name, horario: null }); }
+      catch(e){ console.error('No se pudo crear el directorio del profesor:', e); }
+    }
     }catch(e){
       console.error('Falló la ficha:', e);
       DB.limpiar = [...new Set([...(DB.limpiar||[]), emailDe(code)])];
