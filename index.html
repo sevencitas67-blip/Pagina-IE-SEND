@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<!-- EmailJS: envía el correo de un reporte nuevo al acudiente. Configuración más abajo (busca "EMAILJS_" en el script principal). -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root{
     --ink:#16243D; --ink-light:#243755;
@@ -452,6 +454,49 @@ const COL_MSG        = collection(nube, 'mensajes');
 const COL_ESCRIBIENDO = collection(nube, 'escribiendo');
 const DOC_CONFIG     = doc(nube, 'colegio', 'config');
 const DOC_NOMINA     = doc(nube, 'colegio', 'estudiantes');
+
+/* =====================================================================
+   EMAILJS · aviso por correo cuando se publica un reporte
+   Reemplaza estos tres valores por los tuyos de emailjs.com (Account → API Keys,
+   Email Services, Email Templates). Sin esto, el correo simplemente no sale
+   (el reporte se guarda igual, solo que sin avisar por correo).
+   ===================================================================== */
+const EMAILJS_PUBLIC_KEY  = '_P_6ra4J-U16kgTmD';
+const EMAILJS_SERVICE_ID  = 'IE-SEND';
+const EMAILJS_TEMPLATE_ID = 'template_hdqojy9';
+const emailjsListo = !!(window.emailjs && EMAILJS_PUBLIC_KEY !== 'TU_PUBLIC_KEY_AQUI');
+if(emailjsListo) window.emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+else console.warn('EmailJS sin configurar: los reportes no van a avisar por correo hasta que pongas tus llaves.');
+
+/* Manda un correo por cada acudiente del estudiante que tenga email guardado.
+   Nunca revienta el guardado del reporte: cualquier fallo queda solo en consola. */
+async function enviarCorreosReporte(studentId, report){
+  if(!emailjsListo) return;
+  const st = studentById(studentId);
+  if(!st) return;
+  const destinos = DB.acudientes.filter(a =>
+    (a.studentIds||[]).includes(studentId) && a.email && a.email.includes('@'));
+  if(!destinos.length) return;
+
+  let enviados = 0;
+  for(const a of destinos){
+    try{
+      await window.emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+        to_email: a.email,
+        to_name: a.nombre || 'acudiente',
+        student_name: st.name,
+        title: report.title,
+        body: report.body,
+        autor_name: currentUser.name,
+        date: report.date,
+      });
+      enviados++;
+    }catch(e){
+      console.error('EmailJS no pudo enviar a ' + a.email + ':', e);
+    }
+  }
+  if(enviados) toast(`Reporte publicado y enviado por correo a ${enviados} acudiente(s)`);
+}
 
 let storageOk = true;
 let espejo = {};                       // última versión conocida del servidor
@@ -1921,7 +1966,7 @@ function renderReportes(main){
   main.innerHTML = `
     <h2>Reportes de estudiantes</h2>
     <p class="subtitle">${profe
-      ? 'Elige el curso, luego el estudiante, y publica la observación. Cada familia solo verá las de su propio estudiante.'
+      ? 'Elige el curso, luego el estudiante, y publica la observación. La familia recibe un correo apenas la publiques.'
       : 'Observaciones que los profesores publicaron sobre ' + esc(myStudents().map(s=>`${s.name} (${s.curso})`).join(', ') || 'tu estudiante') + '.'}</p>
 
     ${profe ? `
@@ -2011,15 +2056,18 @@ async function saveReport(){
   const body = $('repBody').value.trim();
   if(!studentId) return toast('Ese curso no tiene estudiantes. Elige otro curso.', true);
   if(!title || !body) return toast('El reporte necesita título y observación.', true);
+  let nuevoReporte = null;
   if(editingReport){
     Object.assign(DB.reports.find(x=>x.id===editingReport), {studentId, title, body});
     editingReport = null; toast('Reporte actualizado');
   }else{
-    DB.reports.push({id:uid('r'), studentId, title, body, authorId:currentUser.id, date:todayStr()});
+    nuevoReporte = {id:uid('r'), studentId, title, body, authorId:currentUser.id, date:todayStr()};
+    DB.reports.push(nuevoReporte);
     toast('Reporte publicado');
   }
   await save();
   renderReportes($('main'));
+  if(nuevoReporte) enviarCorreosReporte(studentId, nuevoReporte);  // se manda por detrás, no frena la pantalla
 }
 
 /* =====================================================================
@@ -2107,18 +2155,19 @@ function renderAdmin(main){
 
     <div class="card">
       <div class="card-head"><h3>Acudientes autorizados</h3></div>
-      <p class="subtitle" style="margin-bottom:16px">Anota la cédula que tomaste en la reunión y el estudiante que le corresponde. Después usa “Crear cuenta” en la fila para generar su código y su contraseña temporal.</p>
+      <p class="subtitle" style="margin-bottom:16px">Anota la cédula que tomaste en la reunión, el estudiante y su correo. Después usa “Crear cuenta” en la fila para generar su código y su contraseña temporal.</p>
       <div class="grid">
         <div class="form-row"><label for="acCedula">Cédula</label><input id="acCedula" type="text" inputmode="numeric" placeholder="1000123456"></div>
         <div class="form-row"><label for="acCurso">Curso</label><select class="curso" id="acCurso">${courseOptions(admCurso)}</select></div>
         <div class="form-row"><label for="acStudent">Estudiante</label><select id="acStudent"></select></div>
+        <div class="form-row"><label for="acEmail">Correo del acudiente</label><input id="acEmail" type="email" placeholder="acudiente@correo.com" required></div>
       </div>
       <button class="btn" id="btnAddAcudiente">Autorizar acudiente</button>
-      <p class="hint">Si el acudiente tiene más de un hijo, escribe la misma cédula otra vez con el otro estudiante: se suman a la misma cuenta.</p>
+      <p class="hint">Si el acudiente tiene más de un hijo, escribe la misma cédula otra vez con el otro estudiante: se suman a la misma cuenta. El correo es obligatorio — ahí es donde le llegan los reportes que publiques.</p>
       <div class="form-row" style="margin-top:18px"><label for="acQuery">Buscar</label>
         <input id="acQuery" type="text" placeholder="Cédula o nombre" value="${esc(acQuery)}"></div>
       <div class="table-wrap">
-        <table><thead><tr><th>Cédula</th><th>Acudiente</th><th>Estudiante(s)</th><th>Estado</th><th></th></tr></thead>
+        <table><thead><tr><th>Cédula</th><th>Acudiente</th><th>Estudiante(s)</th><th>Correo</th><th>Estado</th><th></th></tr></thead>
         <tbody id="acBody"></tbody></table>
       </div>
     </div>
@@ -2299,20 +2348,26 @@ function nombresDe(ids){
 async function addAcudiente(){
   const cedula = String($('acCedula').value||'').replace(/\D/g,'');
   const sid = $('acStudent').value;
+  const email = $('acEmail').value.trim();
   if(!cedula) return toast('Escribe el número de cédula.', true);
   if(!sid) return toast('Ese curso no tiene estudiantes. Elige otro curso.', true);
+  if(!email || !email.includes('@')) return toast('Escribe el correo del acudiente: es obligatorio para poder avisarle por email.', true);
   const ya = DB.acudientes.find(a=>a.cedula===cedula);
   if(ya){
+    ya.email = email;
     ya.studentIds = ya.studentIds || [];
-    if(ya.studentIds.includes(sid)) return toast('Ese acudiente ya está vinculado a ese estudiante.', true);
+    if(ya.studentIds.includes(sid)){
+      await save(); drawAcudientes();
+      return toast('Correo actualizado');
+    }
     ya.studentIds.push(sid);
     const cuenta = DB.users.find(u=>u.id===ya.userId);
     if(cuenta){ cuenta.studentIds = ya.studentIds.slice(); cuenta.hijos = hijosDe(ya.studentIds); }
     await save(); drawAcudientes();
     return toast('Estudiante agregado a un acudiente existente');
   }
-  DB.acudientes.push({ cedula, nombre:'', studentIds:[sid], activo:true, userId:null });
-  $('acCedula').value='';
+  DB.acudientes.push({ cedula, nombre:'', email, studentIds:[sid], activo:true, userId:null });
+  $('acCedula').value=''; $('acEmail').value='';
   await save(); drawAcudientes();
   toast('Cédula autorizada. Ya puede registrarse.');
 }
@@ -2339,19 +2394,41 @@ function drawAcudientes(){
       <td class="code-cell">${esc(a.cedula)}</td>
       <td>${a.nombre ? esc(a.nombre) : '<span style="color:var(--text-soft)">Sin registrar</span>'}</td>
       <td>${esc(nombresDe(a.studentIds))}</td>
+      <td>${a.email ? esc(a.email) : '<span style="color:var(--red); font-weight:600">Falta correo</span>'}</td>
       <td>${estado}</td>
       <td style="white-space:nowrap">
         ${cuenta ? '' : `<button class="btn tiny" data-acc="${esc(a.cedula)}">Crear cuenta</button>`}
+        <button class="btn ghost tiny" data-ace="${esc(a.cedula)}">${a.email?'Editar correo':'Agregar correo'}</button>
         <button class="btn ghost tiny" data-acb="${esc(a.cedula)}">${a.activo===false?'Activar':'Bloquear'}</button>
         <button class="btn danger tiny" data-acr="${esc(a.cedula)}">Retirar</button>
       </td></tr>`;
-  }).join('') : '<tr><td colspan="5" class="empty">Todavía no hay acudientes autorizados.</td></tr>';
+  }).join('') : '<tr><td colspan="6" class="empty">Todavía no hay acudientes autorizados.</td></tr>';
+
+  $('acBody').querySelectorAll('[data-ace]').forEach(b=>b.onclick = async ()=>{
+    const a = DB.acudientes.find(x=>x.cedula===b.dataset.ace);
+    if(!a) return;
+    const nuevo = prompt('Correo del acudiente (cédula ' + a.cedula + '):', a.email || '');
+    if(nuevo === null) return;
+    const limpio = nuevo.trim();
+    if(limpio && !limpio.includes('@')) return toast('Ese correo no parece válido.', true);
+    a.email = limpio;
+    await save(); toast(limpio ? 'Correo guardado' : 'Correo borrado'); drawAcudientes();
+  });
 
   $('acBody').querySelectorAll('[data-acc]').forEach(b=>b.onclick = ()=> conCarga(async ()=>{
     const a = DB.acudientes.find(x=>x.cedula===b.dataset.acc);
     if(!a) return;
     const nombre = prompt('Nombre completo del acudiente (cédula ' + a.cedula + '):', a.nombre || '');
     if(!nombre || nombre.trim().length < 3) return toast('Cancelado: falta el nombre.', true);
+
+    // Sin correo guardado, no se deja crear la cuenta sin pedirlo aquí mismo.
+    let email = a.email || '';
+    if(!email){
+      const escrito = prompt('Este acudiente no tiene correo guardado.\nEscribe su correo (ahí le llegan los reportes):', '');
+      email = (escrito || '').trim();
+      if(!email || !email.includes('@')) return toast('Cancelado: hace falta un correo válido para crear la cuenta.', true);
+    }
+
     const code = makeCode('familia');
     const clave = tempPassword();
     let nuevoUid;
@@ -2383,6 +2460,7 @@ Motivo: ${e.code || e.message}
     DB.users.push(nuevo);
     a.userId = nuevo.id;
     a.nombre = nombre.trim();
+    a.email = email;
     await save(); drawAcudientes();
     await confirmDialog('Cuenta creada',
       `Entrega estos datos a ${nuevo.name}:\n\nCódigo: ${code}\nContraseña temporal: ${clave}\n\nDebe cambiarla al entrar. Esta pantalla no se vuelve a mostrar.`,
