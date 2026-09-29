@@ -152,6 +152,7 @@
     background:#f7e9ec; color:#8A2F3A; border:1px solid #e0cdd2;}
   .aviso-horario.abierto{background:#e8f0f4; color:#1F5E7A; border-color:#c7dbe4;}
   .escribiendo{display:flex; align-items:center; gap:4px; padding:6px 13px 10px; align-self:flex-start;}
+  .escribiendo[hidden]{display:none;}
   .escribiendo span{width:6px; height:6px; border-radius:50%; background:var(--text-soft); opacity:.35; animation:puntito 1.2s infinite;}
   .escribiendo span:nth-child(2){animation-delay:.2s;}
   .escribiendo span:nth-child(3){animation-delay:.4s;}
@@ -659,29 +660,6 @@ async function guardarMisCursos(cursos){
 
 /* Crea la ficha del usuario y comprueba que quedó. Si el servidor la rechaza,
    avisa aquí mismo en vez de dejar una cuenta que no puede entrar. */
-/* Publica una materia de un curso en un solo envío.
-   Escribe solo esa casilla de cada estudiante: nunca toca las notas de otro profesor. */
-async function guardarDefinitivas(curso, materia, term, cambios){
-  try{
-    const lote = writeBatch(nube);
-    cambios.forEach(({st, valor, obsTxt})=>{
-      lote.set(doc(COL_NOTAS, st.id), {
-        curso, term,
-        marks: { [term]: { [materia]: valor === null ? deleteField() : valor } },
-        obs:   { [term]: { [materia]: obsTxt || deleteField() } }
-      }, { merge:true });
-    });
-    await lote.commit();
-    storageOk = true;
-    return true;
-  }catch(e){
-    storageOk = false;
-    console.error('No se pudieron publicar las notas:', e);
-    toast('El servidor rechazó las notas: ' + (e.code || e.message), true);
-    return false;
-  }
-}
-
 /* Abrir o cerrar un periodo se escribe de una y se comprueba leyendo de vuelta. */
 async function diagnostico(){
   const out = $('diagOut');
@@ -719,7 +697,7 @@ async function diagnostico(){
   });
   await probar('leer colegio/config', async ()=>{
     const d = await getDoc(DOC_CONFIG);
-    return d.exists() ? 'periodos=' + JSON.stringify(d.data().estadoTerms||{}) : 'no existe aún';
+    return d.exists() ? 'existe' : 'no existe aún';
   });
   await probar('ESCRIBIR colegio/config', async ()=>{
     await setDoc(DOC_CONFIG, { pruebaDiag: Date.now() }, { merge:true });
@@ -752,22 +730,6 @@ async function diagnostico(){
 
   line('─'.repeat(46));
   line('Las líneas con ✘ son las que el servidor rechaza.');
-}
-
-async function guardarEstadoPeriodo(term, estado){
-  const nuevo = { ...(DB.estadoTerms||{}), [term]: estado };
-  try{
-    await conPermiso(()=> setDoc(DOC_CONFIG, { estadoTerms: nuevo }, { merge:true }));
-    const check = await getDoc(DOC_CONFIG);
-    if(!check.exists() || (check.data().estadoTerms||{})[term] !== estado)
-      throw new Error('El servidor no guardó el cambio.');
-    DB.estadoTerms = nuevo;
-    return true;
-  }catch(e){
-    console.error('No se pudo cambiar el periodo:', e);
-    toast('No se pudo cambiar el periodo: ' + (e.code || e.message), true);
-    return false;
-  }
 }
 
 async function guardarMiHorarioClases(horarioClases){
@@ -851,12 +813,47 @@ function refrescarMensajes(){
   if(currentUser && activeTab === 'mensajeria' && $('threadMsgs')) renderThread();
 }
 
+/* ---------- Notificaciones del navegador ---------- */
+function pedirPermisoNotificaciones(){
+  if(!('Notification' in window)) return;          // navegador sin soporte: no hace nada, no truena
+  if(Notification.permission === 'default') Notification.requestPermission().catch(()=>{});
+}
+function notificarMensaje(msg){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  // Si ya está viendo esa misma conversación con la ventana activa, no hace falta avisar
+  const yaLaEstaViendo = !document.hidden && activeTab === 'mensajeria' && activeContact === msg.from;
+  if(yaLaEstaViendo) return;
+  const quien = userById(msg.from);
+  try{
+    const n = new Notification(quien ? quien.name : 'Nuevo mensaje', {
+      body: msg.text,
+      tag: 'cuaderno-msg-' + msg.from,   // un aviso por remitente, no se amontonan
+    });
+    n.onclick = () => {
+      window.focus();
+      activeContact = msg.from;
+      showTab('mensajeria');
+      n.close();
+    };
+  }catch(e){ console.error('Notificación:', e); }
+}
+
 function escucharMensajes(){
+  let primeraVezRecibidos = true;   // la primera carga trae TODO el historial: no se avisa de eso
   const mapear = snap => snap.docs.map(d => ({ id:d.id, ...d.data() }));
   onSnapshot(query(COL_MSG, where('from','==',currentUser.id)),
     s => { mensajesConfirmados.enviados = mapear(s); refrescarMensajes(); }, e => console.error('Chat (enviados):', e));
   onSnapshot(query(COL_MSG, where('to','==',currentUser.id)),
-    s => { mensajesConfirmados.recibidos = mapear(s); refrescarMensajes(); }, e => console.error('Chat (recibidos):', e));
+    s => {
+      if(!primeraVezRecibidos){
+        s.docChanges().forEach(ch => {
+          if(ch.type === 'added') notificarMensaje({ id: ch.doc.id, ...ch.doc.data() });
+        });
+      }
+      primeraVezRecibidos = false;
+      mensajesConfirmados.recibidos = mapear(s);
+      refrescarMensajes();
+    }, e => console.error('Chat (recibidos):', e));
 }
 
 /* ---------- "Escribiendo…" ----------
@@ -991,12 +988,6 @@ const SUBJECTS = [
   'Informática','Semillero-Profundización','Educación Física','Sociales',
   'Filosofía','Economía','Artes'
 ];
-const ABBR = {
-  'Matemáticas':'Mat','Química':'Quí','Física':'Fís','Ética':'Éti','Religión':'Rel',
-  'Español':'Esp','Inglés':'Ing','Informática':'Inf','Semillero-Profundización':'Sem',
-  'Educación Física':'E.F.','Sociales':'Soc','Filosofía':'Fil','Economía':'Eco','Artes':'Art'
-};
-const abbr = s => ABBR[s] || s.slice(0,3);
 
 /* =====================================================================
    NÓMINA INICIAL · 32 a 40 estudiantes por curso
@@ -1032,8 +1023,6 @@ const COORD_CODE = 'COO-1001';
 const COORD_PASS = 'coordinacion';
 const DEMO_ANSWER = 'cuaderno';
 const RECOVERY_Q = '¿Cuál es la palabra clave que te dio el colegio?';
-const TERMS = ['T1','T2','T3'];
-const TERM_ACTUAL = 'T2';
 
 
 /* =====================================================================
@@ -1057,50 +1046,14 @@ const isFamilia = () => currentUser && currentUser.role === 'familia';
 const misCursos    = () => (currentUser.cursos || []);
 const miDireccion  = () => currentUser.director || '';
 const dirijoCurso  = c => !!miDireccion() && miDireccion() === c;
-// Materias que este profesor puede calificar en ese curso
-const misMaterias  = curso => dirijoCurso(curso) ? DB.subjects.slice() : (currentUser.subjects || []);
 const cursosVisibles = () => {
   if(!currentUser || !isProfe()) return COURSES.slice();
   const set = new Set(currentUser.cursos || []);
   if(currentUser.director) set.add(currentUser.director);
   return COURSES.filter(c => set.has(c));
 };
-const periodoAbierto = t => (DB.estadoTerms || {})[t] === 'abierto';
 const nombreRol = r => r === 'coordinador' ? 'Coordinación' : r === 'profesor' ? 'Profesor' : 'Familia';
 const myStudents = () => (currentUser.studentIds||[]).map(studentById).filter(Boolean);
-
-function markOf(sid, term, subject){
-  const t = DB.marks[sid] && DB.marks[sid][term];
-  return t && typeof t[subject] === 'number' ? t[subject] : null;
-}
-function setMark(sid, term, subject, value){
-  if(!DB.marks[sid]) DB.marks[sid] = {};
-  if(!DB.marks[sid][term]) DB.marks[sid][term] = {};
-  if(value === null) delete DB.marks[sid][term][subject];
-  else DB.marks[sid][term][subject] = value;
-}
-function obsOf(sid, term, subject){
-  const t = DB.obs[sid] && DB.obs[sid][term];
-  return t && t[subject] ? t[subject] : '';
-}
-function setObs(sid, term, subject, text){
-  if(!text){
-    if(DB.obs[sid] && DB.obs[sid][term]) delete DB.obs[sid][term][subject];
-    return;
-  }
-  if(!DB.obs[sid]) DB.obs[sid] = {};
-  if(!DB.obs[sid][term]) DB.obs[sid][term] = {};
-  DB.obs[sid][term][subject] = text;
-}
-function avgOf(sid, term){
-  const vals = DB.subjects.map(m=>markOf(sid, term, m)).filter(v=>v !== null);
-  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
-}
-function avgCourse(curso, term){
-  const vals = studentsIn(curso).map(s=>avgOf(s.id, term)).filter(v=>v !== null);
-  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
-}
-const fmt = v => v === null ? '—' : v.toFixed(1);
 
 /* =====================================================================
    ARRANQUE
@@ -1118,18 +1071,6 @@ function activarEscuchas(){
    Ningún redibujado lo borra y ningún error de render lo impide. */
 document.addEventListener('click', async ev => {
   if(!currentUser) return;
-
-  const per = ev.target.closest('[data-per]');
-  if(per){
-    if(per.dataset.ocupado) return;          // evita dobles clics encimados
-    per.dataset.ocupado = '1';
-    per.textContent = 'Guardando…';
-    const t = per.dataset.per;
-    const estado = (DB.estadoTerms||{})[t] === 'abierto' ? 'cerrado' : 'abierto';
-    const ok = await conCarga(()=> guardarEstadoPeriodo(t, estado));
-    if(ok) toast(estado === 'abierto' ? `Periodo ${t} abierto` : `Periodo ${t} cerrado`);
-    return drawPeriodos();                   // repinta solo esta tabla
-  }
 
   const limp = ev.target.closest('[data-limp]');
   if(limp){
@@ -1517,6 +1458,7 @@ function pintarAvisos(){
 }
 
 function renderMensajeria(main){
+  pedirPermisoNotificaciones();
   // Profesor: habla con colegas y con familias. Familia: solo con profesores.
   const colegas = isFamilia()
     ? DB.users.filter(u=>u.role==='profesor')
@@ -1701,257 +1643,6 @@ function renderCursos(main){
 
 
 /* =====================================================================
-   NOTAS · boletín por estudiante
-   ===================================================================== */
-let notaCurso = null, notaStudent = null, notaTerm = TERM_ACTUAL;
-
-function renderNotas(main){
-  if(isCoord()) return;                    // coordinación no ve notas
-  return isProfe() ? renderNotasProfe(main) : renderNotasFamilia(main);
-}
-
-let notaVista = 'materias';   // 'materias' | 'direccion'
-let notaMateria = null;
-
-function renderNotasProfe(main){
-  const materias = currentUser.subjects || [];
-  const cursos = currentUser.cursos || [];
-  const dirige = currentUser.director || '';
-
-  if(!materias.length && !dirige){
-    main.innerHTML = `<h2>Notas</h2>
-      <div class="card"><p class="empty">Coordinación todavía no te asignó materias.</p></div>`;
-    return;
-  }
-  if(!cursos.length && !dirige){
-    main.innerHTML = `<h2>Notas</h2>
-      <div class="card"><p class="empty">Todavía no marcaste tus cursos. Ve a “Mi cuenta” → Mis cursos.</p></div>`;
-    return;
-  }
-  if(!dirige) notaVista = 'materias';
-  if(!notaMateria || !materias.includes(notaMateria)) notaMateria = materias[0] || null;
-  if(!notaCurso || !cursos.includes(notaCurso)) notaCurso = cursos[0] || dirige;
-
-  main.innerHTML = `
-    <h2>Notas</h2>
-    <div class="sub-tabs">
-      ${materias.length ? `<button class="sub-tab ${notaVista==='materias'?'on':''}" data-v="materias">Mis materias</button>` : ''}
-      ${dirige ? `<button class="sub-tab ${notaVista==='direccion'?'on':''}" data-v="direccion">Dirección de curso ${esc(dirige)}</button>` : ''}
-    </div>
-    <div id="notaPanel"></div>`;
-
-  main.querySelectorAll('.sub-tab').forEach(b=>b.onclick = ()=>{ notaVista = b.dataset.v; renderNotasProfe(main); });
-  if(notaVista === 'direccion') panelDireccion(); else panelMateria();
-}
-
-/* ---------- Publicar definitivas: una materia, un curso, todo el salón ---------- */
-function panelMateria(){
-  const materias = currentUser.subjects || [];
-  const cursos = currentUser.cursos || [];
-  const lista = studentsIn(notaCurso);
-  const abierto = periodoAbierto(notaTerm);
-
-  $('notaPanel').innerHTML = `
-    <p class="subtitle">Elige tu materia y el curso: aparece el salón completo para poner la definitiva de una sola pasada.</p>
-    <div class="card">
-      <div class="grid">
-        <div class="form-row" style="margin:0"><label for="nMat">Materia</label>
-          <select id="nMat">${materias.map(m=>`<option${m===notaMateria?' selected':''}>${esc(m)}</option>`).join('')}</select></div>
-        <div class="form-row" style="margin:0"><label for="nCur">Curso</label>
-          <select id="nCur">${cursos.map(c=>`<option value="${c}"${c===notaCurso?' selected':''}>${c} · ${courseCount(c)} est.</option>`).join('')}</select></div>
-        <div class="form-row" style="margin:0"><label for="nTerm">Periodo</label>
-          <select id="nTerm">${DB.terms.map(t=>`<option${t===notaTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
-      </div>
-    </div>
-    ${abierto ? '' : `<div class="locked-banner">🔒 El periodo ${esc(notaTerm)} está cerrado. Coordinación debe abrirlo para poder calificar.</div>`}
-    <div class="card">
-      <div class="card-head">
-        <h3>${esc(notaMateria)} <span class="curso-chip">${esc(notaCurso)}</span></h3>
-        <span class="tag">${abierto ? 'Abierto' : 'Cerrado'} · ${esc(notaTerm)}</span>
-      </div>
-      ${lista.length ? `
-      <div class="table-wrap"><table class="boletin">
-        <thead><tr><th>Estudiante</th><th>Definitiva (1.0 – 5.0)</th><th>Observación</th></tr></thead>
-        <tbody>${lista.map(st=>{
-          const v = markOf(st.id, notaTerm, notaMateria);
-          return `<tr>
-            <td>${esc(st.name)}</td>
-            <td><input class="nota ${v!==null&&v<3?'bad':''}" data-sid="${st.id}" type="number"
-                   min="1" max="5" step="0.1" value="${v===null?'':v.toFixed(1)}" placeholder="—" ${abierto?'':'disabled'}></td>
-            <td><input class="obs" data-obs="${st.id}" type="text" ${abierto?'':'disabled'}
-                   value="${esc(obsOf(st.id, notaTerm, notaMateria))}" placeholder="Comentario para la familia"></td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table></div>
-      <div class="sticky-save">
-        <button class="btn" id="btnPublicar" ${abierto?'':'disabled'}>Publicar definitivas</button>
-        <span class="hint" style="margin:0">${abierto
-          ? 'Se guardan solo las casillas que cambiaste. En blanco = sin calificar.'
-          : 'Periodo cerrado: no se pueden agregar ni quitar notas.'}</span>
-      </div>` : '<p class="empty">Este curso no tiene estudiantes matriculados.</p>'}
-    </div>`;
-
-  $('nMat').onchange = ()=>{ notaMateria = $('nMat').value; panelMateria(); };
-  $('nCur').onchange = ()=>{ notaCurso = $('nCur').value; panelMateria(); };
-  $('nTerm').onchange = ()=>{ notaTerm = $('nTerm').value; panelMateria(); };
-  $('notaPanel').querySelectorAll('input.nota').forEach(inp=>{
-    inp.oninput = ()=>{ const v = parseFloat(inp.value); inp.classList.toggle('bad', !isNaN(v) && v < 3); };
-  });
-  if($('btnPublicar')) $('btnPublicar').onclick = ()=> conCarga(publicarDefinitivas, $('btnPublicar'));
-}
-
-async function publicarDefinitivas(){
-  // El estado del periodo se vuelve a consultar al servidor justo antes de publicar:
-  // coordinación pudo cerrarlo mientras el profesor llenaba la planilla.
-  try{
-    const cfg = await getDoc(DOC_CONFIG);
-    DB.estadoTerms = cfg.exists() ? (cfg.data().estadoTerms || {}) : {};
-  }catch(e){ console.error(e); }
-  if(!periodoAbierto(notaTerm)){
-    await confirmDialog('Periodo cerrado',
-      `Coordinación cerró el periodo ${notaTerm}. Lo que escribiste no se publicó y las notas siguen como estaban.\n\nPide que lo reabran si necesitas corregir.`,
-      'Entendido', true);
-    return panelMateria();
-  }
-  const cambios = [];
-  let invalidas = 0;
-  studentsIn(notaCurso).forEach(st=>{
-    const inp = document.querySelector(`input.nota[data-sid="${st.id}"]`);
-    const obsI = document.querySelector(`input.obs[data-obs="${st.id}"]`);
-    if(!inp) return;
-    const raw = inp.value.trim();
-    let valor = null;
-    if(raw !== ''){
-      const v = parseFloat(raw);
-      if(isNaN(v) || v < 1 || v > 5){ invalidas++; return; }
-      valor = Math.round(v*10)/10;
-    }
-    const obsTxt = obsI ? obsI.value.trim() : '';
-    if(valor !== markOf(st.id, notaTerm, notaMateria) || obsTxt !== obsOf(st.id, notaTerm, notaMateria))
-      cambios.push({ st, valor, obsTxt });
-  });
-
-  if(!cambios.length){
-    return toast(invalidas ? `${invalidas} nota(s) fuera del rango 1.0–5.0.` : 'No hay cambios que publicar.', !!invalidas);
-  }
-  // Se pinta de una y se envía por detrás: no hay que esperar al servidor.
-  const previo = cambios.map(c=>({
-    st: c.st,
-    valor: markOf(c.st.id, notaTerm, notaMateria),
-    obsTxt: obsOf(c.st.id, notaTerm, notaMateria)
-  }));
-  const materia = notaMateria, term = notaTerm, curso = notaCurso;
-  cambios.forEach(c=>{
-    setMark(c.st.id, term, materia, c.valor);
-    setObs(c.st.id, term, materia, c.obsTxt);
-  });
-  toast(invalidas ? `${cambios.length} publicadas · ${invalidas} fuera de rango` : `${cambios.length} nota(s) publicadas`);
-  panelMateria();
-
-  guardarDefinitivas(curso, materia, term, cambios).then(async ok=>{
-    if(ok) return;
-    previo.forEach(v=>{                       // el servidor las rechazó: se devuelven
-      setMark(v.st.id, term, materia, v.valor);
-      setObs(v.st.id, term, materia, v.obsTxt);
-    });
-    try{                                      // puede haberse cerrado justo ahora
-      const cfg = await getDoc(DOC_CONFIG);
-      DB.estadoTerms = cfg.exists() ? (cfg.data().estadoTerms || {}) : {};
-    }catch(e){}
-    await confirmDialog('Las notas no se guardaron',
-      periodoAbierto(term)
-        ? `El servidor rechazó ${cambios.length} nota(s) de ${materia} en ${curso}. Se dejaron como estaban.`
-        : `Coordinación cerró el periodo ${term} mientras publicabas. Ninguna nota quedó guardada: la pantalla ya muestra los valores reales.`,
-      'Entendido', true);
-    if(notaMateria === materia && notaTerm === term && notaCurso === curso) panelMateria();
-  });
-}
-
-/* ---------- Dirección de curso: el panorama completo ---------- */
-function panelDireccion(){
-  const curso = currentUser.director;
-  const lista = studentsIn(curso);
-  const mats = DB.subjects;
-
-  $('notaPanel').innerHTML = `
-    <p class="subtitle">Todas las materias de tu curso, tal como las publicaron los demás profesores. Aquí solo consultas: cada quien edita la suya.</p>
-    <div class="card">
-      <div class="form-row" style="margin:0; max-width:260px"><label for="dTerm">Periodo</label>
-        <select id="dTerm">${DB.terms.map(t=>`<option${t===notaTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Curso ${esc(curso)}</h3><span class="tag">${lista.length} estudiantes</span></div>
-      ${lista.length ? `
-      <div class="table-wrap"><table class="matrix">
-        <thead><tr><th class="nm">Estudiante</th>${mats.map(m=>`<th title="${esc(m)}">${esc(m.slice(0,4))}</th>`).join('')}<th>Prom.</th><th>Perd.</th></tr></thead>
-        <tbody>${lista.map(st=>{
-          const prom = avgOf(st.id, notaTerm);
-          const perd = mats.filter(m=>{ const v = markOf(st.id, notaTerm, m); return v !== null && v < 3; }).length;
-          return `<tr><td class="nm">${esc(st.name)}</td>
-            ${mats.map(m=>{ const v = markOf(st.id, notaTerm, m);
-              return `<td class="${v!==null&&v<3?'bad':''}">${v===null?'—':v.toFixed(1)}</td>`; }).join('')}
-            <td class="${prom!==null&&prom<3?'bad':''}"><b>${fmt(prom)}</b></td>
-            <td class="${perd?'bad':''}">${perd}</td></tr>`;
-        }).join('')}</tbody>
-      </table></div>` : '<p class="empty">Este curso no tiene estudiantes matriculados.</p>'}
-    </div>`;
-
-  $('dTerm').onchange = ()=>{ notaTerm = $('dTerm').value; panelDireccion(); };
-}
-
-/* --------- Notas para la familia (solo lectura) --------- */
-let famTerm = TERM_ACTUAL, famStudent = null;
-function renderNotasFamilia(main){
-  const hijos = myStudents();
-  if(!hijos.length){
-    main.innerHTML = `<h2>Notas</h2><div class="card"><p class="empty">Tu cuenta todavía no tiene un estudiante vinculado. Pídele a un profesor que lo asigne.</p></div>`;
-    return;
-  }
-  if(!famStudent || !hijos.some(h=>h.id===famStudent)) famStudent = hijos[0].id;
-  const s = studentById(famStudent);
-  const a = avgOf(s.id, famTerm);
-  const perdidas = DB.subjects.filter(m=>{ const v = markOf(s.id, famTerm, m); return v !== null && v < 3; }).length;
-
-  main.innerHTML = `
-    <h2>Notas de ${esc(s.name)}</h2>
-    <p class="subtitle">Curso ${esc(s.curso)} · boletín de las ${DB.subjects.length} materias. Solo lectura.</p>
-    <div class="locked-banner">🔒 Solo ves las notas del estudiante vinculado a tu cuenta.</div>
-
-    <div class="card">
-      <div class="grid">
-        ${hijos.length > 1 ? `<div class="form-row" style="margin:0"><label for="famSt">Estudiante</label>
-          <select id="famSt">${hijos.map(h=>`<option value="${h.id}"${h.id===famStudent?' selected':''}>${esc(h.name)}</option>`).join('')}</select></div>` : ''}
-        <div class="form-row" style="margin:0"><label for="famTerm">Periodo</label>
-          <select id="famTerm">${DB.terms.map(t=>`<option${t===famTerm?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
-      </div>
-    </div>
-
-    <div class="stat-strip">
-      <div class="stat"><div class="k">Promedio ${esc(famTerm)}</div><div class="v ${a!==null&&a<3?'bad':''}">${fmt(a)}</div></div>
-      <div class="stat"><div class="k">Materias perdidas</div><div class="v ${perdidas?'bad':''}">${perdidas}</div></div>
-      <div class="stat"><div class="k">Materias</div><div class="v">${DB.subjects.length}</div></div>
-    </div>
-
-    <div class="card">
-      <div class="table-wrap"><table>
-        <thead><tr><th>Materia</th><th>Nota</th><th>Observación del profesor</th></tr></thead>
-        <tbody>${DB.subjects.map(m=>{
-          const v = markOf(s.id, famTerm, m);
-          const o = obsOf(s.id, famTerm, m);
-          return `<tr>
-            <td>${esc(m)}</td>
-            <td><span class="grade-stamp ${v!==null&&v>=3?'good':''}">${v===null?'—':v.toFixed(1)}</span></td>
-            <td style="color:var(--text-soft)">${o ? esc(o) : '—'}</td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table></div>
-    </div>`;
-
-  if($('famSt')) $('famSt').onchange = ()=>{ famStudent = $('famSt').value; renderNotasFamilia(main); };
-  $('famTerm').onchange = ()=>{ famTerm = $('famTerm').value; renderNotasFamilia(main); };
-}
-
-/* =====================================================================
    REPORTES
    ===================================================================== */
 let editingReport = null;
@@ -2107,7 +1798,7 @@ function renderAdmin(main){
           <input id="admSearch" type="text" placeholder="Ej: Torres" value="${esc(admQuery)}"></div>
       </div>
       <div class="table-wrap" style="margin-top:16px">
-        <table><thead><tr><th>Estudiante</th><th>Curso</th><th>Promedio ${esc(TERM_ACTUAL)}</th><th>Reportes</th><th></th></tr></thead>
+        <table><thead><tr><th>Estudiante</th><th>Curso</th><th>Reportes</th><th></th></tr></thead>
         <tbody id="stBody"></tbody></table>
       </div>
       <p class="hint" id="stCount"></p>
@@ -2120,7 +1811,7 @@ function renderAdmin(main){
       </div>
       <button class="btn" id="btnAddSubject">Agregar materia</button>
       <div class="table-wrap" style="margin-top:18px">
-        <table><thead><tr><th>Materia</th><th>Abreviatura</th><th></th></tr></thead>
+        <table><thead><tr><th>Materia</th><th></th></tr></thead>
         <tbody id="subBody"></tbody></table>
       </div>
     </div>
@@ -2246,18 +1937,16 @@ function drawStudents(){
   }
   $('stCount').textContent = alcance;
   $('stBody').innerHTML = list.length ? list.map(s=>{
-    const a = avgOf(s.id, TERM_ACTUAL);
     return `<tr>
       <td>${esc(s.name)}</td>
       <td><span class="curso-chip">${esc(s.curso)}</span></td>
-      <td><span class="prom ${a!==null&&a<3?'bad':''}">${fmt(a)}</span></td>
       <td>${DB.reports.filter(r=>r.studentId===s.id).length}</td>
       <td style="white-space:nowrap">
         <button class="btn ghost tiny" data-rn="${s.id}">Renombrar</button>
         <button class="btn ghost tiny" data-mv="${s.id}">Cambiar curso</button>
         <button class="btn danger tiny" data-ds="${s.id}">Eliminar</button></td>
     </tr>`;
-  }).join('') : `<tr><td colspan="5" class="empty">No hay estudiantes que coincidan.</td></tr>`;
+  }).join('') : `<tr><td colspan="4" class="empty">No hay estudiantes que coincidan.</td></tr>`;
 
   $('stBody').querySelectorAll('[data-rn]').forEach(b=>b.onclick = async ()=>{
     const s = studentById(b.dataset.rn);
@@ -2317,14 +2006,13 @@ async function addStudent(){
 
 function drawSubjects(){
   $('subBody').innerHTML = DB.subjects.length ? DB.subjects.map(s=>`
-    <tr><td>${esc(s)}</td><td class="mono">${esc(abbr(s))}</td>
+    <tr><td>${esc(s)}</td>
     <td><button class="btn danger tiny" data-dsub="${esc(s)}">Quitar</button></td></tr>`).join('')
-    : '<tr><td colspan="3" class="empty">No hay materias registradas.</td></tr>';
+    : '<tr><td colspan="2" class="empty">No hay materias registradas.</td></tr>';
 
   $('subBody').querySelectorAll('[data-dsub]').forEach(b=>b.onclick = async ()=>{
     const s = b.dataset.dsub;
-    const ok = await confirmDialog('Quitar materia',
-      `${s} desaparecerá de todas las planillas y boletines. Las notas ya registradas de esa materia dejan de mostrarse.`, 'Quitar');
+    const ok = await confirmDialog('Quitar materia', `${s} se quitará de la lista.`, 'Quitar');
     if(!ok) return;
     DB.subjects = DB.subjects.filter(x=>x!==s);
     await save(); toast('Materia quitada'); renderAdmin($('main'));
